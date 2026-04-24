@@ -1,6 +1,14 @@
 import { LlmAgent } from '@google/adk';
-import { analyzeDiffMetadata } from '../tools/diff_tools.js';
+
 import { searchLocalRules } from '../tools/rag_tools.js';
+import {
+  SECURITY_AUDITOR_PROMPT,
+  CLEAN_CODER_PROMPT,
+  SRE_AGENT_PROMPT,
+  BUSINESS_PROXY_PROMPT,
+  SECURITY_REVIEWER_PROMPT,
+  PERFORMANCE_REVIEWER_PROMPT
+} from '../prompts/index.js';
 
 /**
  * Agente de Segurança (The Security Auditor)
@@ -9,8 +17,8 @@ export const getSecurityAuditor = (model: string) => new LlmAgent({
   name: 'security-auditor',
   model: model,
   description: 'Auditor de segurança focado em vulnerabilidades e conformidade.',
-  instruction: `Você é o "Security Auditor". Sua responsabilidade é identificar vulnerabilidades.`,
-  tools: [analyzeDiffMetadata],
+  instruction: SECURITY_AUDITOR_PROMPT,
+
   outputKey: 'security_findings',
 });
 
@@ -21,8 +29,8 @@ export const getCleanCoder = (model: string) => new LlmAgent({
   name: 'clean-coder',
   model: model,
   description: 'Especialista em qualidade de código e padrões de design.',
-  instruction: `Você é o "Clean Coder". Sua responsabilidade é garantir a manutenibilidade do código.`,
-  tools: [analyzeDiffMetadata],
+  instruction: CLEAN_CODER_PROMPT,
+
   outputKey: 'quality_findings',
 });
 
@@ -33,8 +41,8 @@ export const getSreAgent = (model: string) => new LlmAgent({
   name: 'sre-agent',
   model: model,
   description: 'Analista de performance e eficiência operacional.',
-  instruction: `Você é o "SRE Agent". Sua responsabilidade é identificar gargalos de performance.`,
-  tools: [analyzeDiffMetadata],
+  instruction: SRE_AGENT_PROMPT,
+
   outputKey: 'performance_findings',
 });
 
@@ -45,9 +53,8 @@ export const getBusinessProxy = (model: string) => new LlmAgent({
   name: 'business-proxy',
   model: model,
   description: 'Validador de regras de negócio e contexto de domínio.',
-  instruction: `Você é o "Business Proxy". Sua responsabilidade é validar se o código fere regras de negócio.
-IMPORTANTE: Sempre utilize a ferramenta "search_local_rules" antes de dar seu veredito, para ler as documentações e garantir aderência às regras corporativas.`,
-  tools: [analyzeDiffMetadata, searchLocalRules],
+  instruction: BUSINESS_PROXY_PROMPT,
+  tools: [searchLocalRules],
   outputKey: 'business_findings',
 });
 
@@ -59,13 +66,7 @@ export const getSecurityReviewer = (model: string) => new LlmAgent({
   name: 'security-reviewer',
   model: model,
   description: 'Revisa achados de outros especialistas sob a ótica de segurança.',
-  instruction: `Analise os achados anteriores de PERFORMANCE e QUALIDADE presentes no histórico da sessão.
-Verifique se alguma otimização introduz brechas de segurança. Levante vetos se necessário.
-
-**Achados Anteriores:**
-- Performance: {performance_findings?}
-- Qualidade: {quality_findings?}
-`,
+  instruction: SECURITY_REVIEWER_PROMPT,
   outputKey: 'security_critique',
 });
 
@@ -73,12 +74,6 @@ export const getPerformanceReviewer = (model: string) => new LlmAgent({
   name: 'performance-reviewer',
   model: model,
   description: 'Revisa achados de outros especialistas sob a ótica de performance.',
-  instruction: `Analise os achados anteriores de SEGURANÇA e QUALIDADE presentes no histórico da sessão.
-Verifique se as correções causam gargalos de performance.
-
-**Achados Anteriores:**
-- Segurança: {security_findings?}
-- Qualidade: {quality_findings?}
-`,
+  instruction: PERFORMANCE_REVIEWER_PROMPT,
   outputKey: 'performance_critique',
 });

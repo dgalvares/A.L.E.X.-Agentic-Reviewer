@@ -34,6 +34,9 @@ Este documento rege o comportamento da IA (Antigravity) durante o desenvolviment
 - **Evaluation Sets:** Para cada novo agente ou ferramenta, um arquivo `.test.json` correspondente deve ser criado em `tests/evaluation/`.
 - **Regressão:** Alterações na lógica de orquestração exigem a execução do `npx adk eval` para garantir que o comportamento do conselho não degradou.
 
+## 7. Validação de Código
+- **Code Review Obrigatório:** Todo novo código gerado ou modificado pela IA ou desenvolvedores deve passar obrigatoriamente pela validação local do A.L.E.X (`alex review` ou `alex analyze <arquivo>`) antes de ser considerado finalizado.
+
 ---
 > [!IMPORTANT]
 > Estas regras são imutáveis e alinham o A.L.E.X ao estado da arte do desenvolvimento agentic com Google ADK.

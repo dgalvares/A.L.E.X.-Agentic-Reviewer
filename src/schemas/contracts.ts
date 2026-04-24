@@ -21,14 +21,18 @@ export const AnalysisIssueSchema = z.object({
 /**
  * Payload de entrada para uma análise de código.
  */
-export const CodeDiffSchema = z.object({
+export const AnalysisPayloadSchema = z.object({
   streamId: z.string().uuid().describe('ID único da transação de análise.'),
   metadata: z.object({
     stack: z.string().describe('Stack tecnológica (ex: .net, react, node).'),
     project: z.string().describe('Nome do projeto ou micro-serviço.'),
+    filesAffected: z.number().optional().describe('Número de arquivos afetados, preenchido pelo orquestrador.'),
   }),
-  diff: z.string().describe('Conteúdo do diff do Git a ser analisado.'),
+  diff: z.string().optional().describe('Conteúdo do diff do Git a ser analisado.'),
+  sourceCode: z.string().optional().describe('Conteúdo completo de um ou mais arquivos a serem analisados.'),
   contextUrls: z.array(z.string().url()).optional().describe('URLs opcionais para RAG de documentação.'),
+}).refine(data => data.diff || data.sourceCode, {
+  message: "O payload deve conter pelo menos 'diff' ou 'sourceCode'.",
 });
 
 /**
@@ -44,5 +48,5 @@ export const FinalReportSchema = z.object({
 
 export type Severity = z.infer<typeof SeveritySchema>;
 export type AnalysisIssue = z.infer<typeof AnalysisIssueSchema>;
-export type CodeDiff = z.infer<typeof CodeDiffSchema>;
+export type AnalysisPayload = z.infer<typeof AnalysisPayloadSchema>;
 export type FinalReport = z.infer<typeof FinalReportSchema>;

@@ -39,7 +39,7 @@ const finalReportSchema: Schema = {
   required: ['streamId', 'verdict', 'summary', 'issues', 'timestamp']
 };
 
-export const createRootAgent = (model: string = process.env.ALEX_MODEL || 'gemini-2.5-pro') => {
+export const createRootAgent = (model: string = process.env.ALEX_MODEL || 'gemini-3.1-pro-preview') => {
   /**
    * 1. Definindo o Conselho de Especialistas (Execução Paralela)
    */

@@ -1,6 +1,7 @@
 import { InMemoryRunner, stringifyContent } from '@google/adk';
 import { createRootAgent } from './agent.js';
-import { CodeDiff } from './schemas/contracts.js';
+import { AnalysisPayload } from './schemas/contracts.js';
+import { extractCodeMetadata } from './tools/diff_tools.js';
 
 /**
  * ReviewOrchestrator - Fachada para o sistema A.L.E.X
@@ -19,9 +20,9 @@ export class ReviewOrchestrator {
   }
 
   /**
-   * Realiza a análise completa de um diff.
+   * Realiza a análise completa de um diff ou arquivos.
    */
-  async analyze(input: CodeDiff) {
+  async analyze(input: AnalysisPayload) {
     const userId = 'system-client';
     
     // 1. Criar uma sessão
@@ -31,6 +32,13 @@ export class ReviewOrchestrator {
     });
 
     console.log(`[ALEX] Iniciando análise da transação: ${input.streamId}`);
+
+    // Extrair metadados para injetar no contexto
+    const contentToAnalyze = input.diff || input.sourceCode || '';
+    const codeMetadata = extractCodeMetadata(contentToAnalyze);
+    if (!input.metadata) input.metadata = { stack: 'unknown', project: 'local-workspace' };
+    input.metadata.stack = codeMetadata.detectedStack;
+    input.metadata.filesAffected = codeMetadata.filesCount;
 
     // 2. Executar o pipeline
     const eventStream = this.runner.runAsync({
