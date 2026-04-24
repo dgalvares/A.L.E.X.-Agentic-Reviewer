@@ -1,6 +1,7 @@
 import { LlmAgent, ParallelAgent, SequentialAgent } from '@google/adk';
 import { Schema, Type } from '@google/genai';
 import { getSecurityAuditor, getCleanCoder, getSreAgent, getBusinessProxy, getSecurityReviewer, getPerformanceReviewer } from './agents/specialists.js';
+import { getDefaultModel } from './config.js';
 
 const finalReportSchema: Schema = {
   type: Type.OBJECT,
@@ -39,7 +40,7 @@ const finalReportSchema: Schema = {
   required: ['streamId', 'verdict', 'summary', 'issues', 'timestamp']
 };
 
-export const createRootAgent = (model: string = process.env.ALEX_MODEL || 'gemini-3.1-pro-preview') => {
+export const createRootAgent = (model: string = getDefaultModel()) => {
   /**
    * 1. Definindo o Conselho de Especialistas (Execução Paralela)
    */

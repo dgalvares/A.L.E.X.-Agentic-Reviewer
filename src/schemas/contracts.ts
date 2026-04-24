@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const MAX_ANALYSIS_CONTENT_LENGTH = 10 * 1024 * 1024;
+
 /**
  * Severidade dos apontamentos seguindo a regra 4 do workspace.
  */
@@ -22,14 +24,15 @@ export const AnalysisIssueSchema = z.object({
  * Payload de entrada para uma análise de código.
  */
 export const AnalysisPayloadSchema = z.object({
-  streamId: z.string().uuid().describe('ID único da transação de análise.'),
+  streamId: z.string().uuid().optional().describe('ID único da transação de análise. Quando ausente, a API gera um UUID.'),
   metadata: z.object({
     stack: z.string().describe('Stack tecnológica (ex: .net, react, node).'),
     project: z.string().describe('Nome do projeto ou micro-serviço.'),
+    model: z.string().optional().describe('Modelo LLM opcional para esta requisição.'),
     filesAffected: z.number().optional().describe('Número de arquivos afetados, preenchido pelo orquestrador.'),
-  }),
-  diff: z.string().optional().describe('Conteúdo do diff do Git a ser analisado.'),
-  sourceCode: z.string().optional().describe('Conteúdo completo de um ou mais arquivos a serem analisados.'),
+  }).optional().describe('Metadados do projeto. Quando ausente, a API usa valores padrão.'),
+  diff: z.string().max(MAX_ANALYSIS_CONTENT_LENGTH).optional().describe('Conteúdo do diff do Git a ser analisado.'),
+  sourceCode: z.string().max(MAX_ANALYSIS_CONTENT_LENGTH).optional().describe('Conteúdo completo de um ou mais arquivos a serem analisados.'),
   contextUrls: z.array(z.string().url()).optional().describe('URLs opcionais para RAG de documentação.'),
 }).refine(data => data.diff || data.sourceCode, {
   message: "O payload deve conter pelo menos 'diff' ou 'sourceCode'.",

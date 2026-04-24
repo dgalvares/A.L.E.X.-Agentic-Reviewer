@@ -1,4 +1,5 @@
 import { InMemoryRunner, stringifyContent } from '@google/adk';
+import crypto from 'crypto';
 import { createRootAgent } from './agent.js';
 import { AnalysisPayload } from './schemas/contracts.js';
 import { extractCodeMetadata } from './tools/diff_tools.js';
@@ -24,6 +25,18 @@ export class ReviewOrchestrator {
    */
   async analyze(input: AnalysisPayload) {
     const userId = 'system-client';
+    const contentToAnalyze = input.diff || input.sourceCode || '';
+    const codeMetadata = extractCodeMetadata(contentToAnalyze);
+    const normalizedInput: AnalysisPayload = {
+      ...input,
+      streamId: input.streamId || crypto.randomUUID(),
+      metadata: {
+        stack: codeMetadata.detectedStack,
+        project: input.metadata?.project || 'local-workspace',
+        model: input.metadata?.model,
+        filesAffected: codeMetadata.filesCount,
+      },
+    };
     
     // 1. Criar uma sessão
     const session = await this.runner.sessionService.createSession({
@@ -31,14 +44,7 @@ export class ReviewOrchestrator {
       userId: userId
     });
 
-    console.log(`[ALEX] Iniciando análise da transação: ${input.streamId}`);
-
-    // Extrair metadados para injetar no contexto
-    const contentToAnalyze = input.diff || input.sourceCode || '';
-    const codeMetadata = extractCodeMetadata(contentToAnalyze);
-    if (!input.metadata) input.metadata = { stack: 'unknown', project: 'local-workspace' };
-    input.metadata.stack = codeMetadata.detectedStack;
-    input.metadata.filesAffected = codeMetadata.filesCount;
+    console.log(`[ALEX] Iniciando análise da transação: ${normalizedInput.streamId}`);
 
     // 2. Executar o pipeline
     const eventStream = this.runner.runAsync({
@@ -46,12 +52,12 @@ export class ReviewOrchestrator {
       sessionId: session.id,
       newMessage: {
         role: 'user',
-        parts: [{ text: JSON.stringify(input) }]
+        parts: [{ text: JSON.stringify(normalizedInput) }]
       }
     });
 
     // 3. Capturar resultados
-    let lastContent = null;
+    let lastContent: string | null = null;
 
     for await (const event of eventStream) {
       // Debug
@@ -77,4 +83,3 @@ export class ReviewOrchestrator {
     throw new Error('O pipeline terminou sem gerar conteúdo.');
   }
 }
-

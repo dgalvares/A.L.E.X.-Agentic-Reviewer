@@ -117,6 +117,13 @@ API_BEARER_TOKEN="sua_senha_secreta"
 npx tsc
 ```
 
+### 4. Validar
+
+```bash
+npm run typecheck
+npm test
+```
+
 ---
 
 ## 💻 Modos de Uso
@@ -237,10 +244,13 @@ A.L.E.X/
 │   ├── tools/
 │   │   └── diff_tools.ts      # Parser O(n) para metadados de diff/sourceCode
 │   ├── utils/
-│   │   └── parser.ts          # Helper compartilhado de extração de JSON
+│   │   ├── parser.ts          # Helper compartilhado de extração de JSON
+│   │   ├── diff_sanitizer.ts  # Sanitização de diffs: redact secrets e arquivos sensíveis
+│   │   └── sensitive_paths.ts # Blocklist centralizada de paths/extensões proibidos
 │   ├── agent.ts               # rootAgent (ADK entry point)
 │   ├── cli.ts                 # CLI: comandos review e analyze
-│   ├── orchestrator.ts        # ReviewOrchestrator — coordenação do pipeline
+│   ├── config.ts              # Configuração centralizada (FALLBACK_MODEL, getDefaultModel)
+│   ├── orchestrator.ts        # ReviewOrchestrator — coordenação imutável do pipeline
 │   └── server.ts              # API Express com Auth, Rate Limit e Zod
 ├── tests/
 │   └── evaluation/            # Arquivos .test.json para ADK Eval
@@ -256,12 +266,14 @@ A.L.E.X/
 
 | Proteção | Implementação |
 |---|---|
-| **Autenticação** | Bearer Token via `crypto.timingSafeEqual` (anti Timing Attack) |
+| **Autenticação** | Bearer Token via SHA-256 hash + `crypto.timingSafeEqual` (anti Timing Attack) |
 | **Rate Limiting** | 10 req/min/IP com `express-rate-limit` (RFC headers) |
-| **Validação de Input** | `AnalysisPayloadSchema` via Zod antes de qualquer processamento |
+| **Validação de Input** | `AnalysisPayloadSchema` via Zod após auth/rate limit, antes do processamento |
 | **Fail-Closed** | API retorna 500 se `API_BEARER_TOKEN` não estiver configurado |
 | **Trust Proxy** | Restrito a `loopback` por padrão; configurável via `TRUSTED_PROXY_CIDR` |
-| **Body Limit** | 10MB máximo para prevenir DoS no Event Loop |
+| **Body Limit** | 10MB máximo; `jsonParser` aplicado **após** auth para economizar parse desnecessário |
+| **Sanitização de Diff** | `diff_sanitizer.ts` redacta secrets e arquivos sensíveis antes de enviar ao LLM |
+| **Imutabilidade** | Orquestrador cria `normalizedInput` via spread — sem mutação do payload original |
 
 > [!WARNING]
 > **Ambientes multi-pod (Cloud Run/Kubernetes):** O `MemoryStore` padrão do rate limiter não é compartilhado entre instâncias. Para deploy distribuído, configure `RedisStore` — veja `BACKLOG.md` [INFRA-01].

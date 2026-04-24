@@ -1,13 +1,15 @@
 {
   "name": "a.l.e.x",
   "version": "1.0.0",
-  "description": "> **Status:** 🚥 Ready for Deployment | **Engine:** Multi-Agent Reasoning (Google ADK)",
+  "description": "A.L.E.X code review microservice powered by Google ADK multi-agent reasoning",
   "bin": {
     "alex": "./dist/cli.js"
   },
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/unit/*.test.mjs",
     "start:api": "node dist/server.js"
   },
   "keywords": [],

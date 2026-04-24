@@ -6,16 +6,22 @@ import ora from 'ora';
 import pc from 'picocolors';
 import { ReviewOrchestrator } from './orchestrator.js';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { extractAndParseJSON } from './utils/parser.js';
 import { FinalReport, FinalReportSchema } from './schemas/contracts.js';
+import { getDefaultModel } from './config.js';
+import { extractCodeMetadata } from './tools/diff_tools.js';
+import { sanitizeDiff } from './utils/diff_sanitizer.js';
+import { isBlockedSensitivePath } from './utils/sensitive_paths.js';
 
 /** Lê o git diff via spawn com stream limitado a evitar OOM/DoS */
 const MAX_DIFF_BYTES = 10 * 1024 * 1024;  // 10MB stdout
 const MAX_STDERR_BYTES = 64 * 1024;       // 64KB stderr — evita OOM em erros verbosos
+const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
+const MAX_CONTEXT_TOTAL_BYTES = 2 * 1024 * 1024;
+
 async function getGitDiff(): Promise<string> {
   return new Promise((resolve, reject) => {
     // encoding não é suportado no tipo ChildProcessWithoutNullStreams; usamos Buffer
@@ -59,6 +65,50 @@ async function getGitDiff(): Promise<string> {
   });
 }
 
+async function getChangedFilesContext(diffContent: string): Promise<string | undefined> {
+  const metadata = extractCodeMetadata(diffContent);
+  const cwdReal = await fs.promises.realpath(process.cwd());
+  let combinedContext = '';
+  let totalBytes = 0;
+
+  for (const file of metadata.files) {
+    const targetPath = path.resolve(process.cwd(), file);
+    let resolvedPath: string;
+
+    try {
+      resolvedPath = await fs.promises.realpath(targetPath);
+    } catch {
+      continue;
+    }
+
+    if (!resolvedPath.startsWith(cwdReal + path.sep) && resolvedPath !== cwdReal) {
+      continue;
+    }
+
+    if (isBlockedSensitivePath(resolvedPath)) {
+      continue;
+    }
+
+    const stat = await fs.promises.stat(resolvedPath);
+    if (!stat.isFile() || stat.size > MAX_CONTEXT_FILE_BYTES) {
+      continue;
+    }
+
+    const content = await fs.promises.readFile(resolvedPath, 'utf-8');
+    const section = `=== File: ${file} ===\n${content}\n`;
+    const sectionBytes = Buffer.byteLength(section, 'utf-8');
+    if (totalBytes + sectionBytes > MAX_CONTEXT_TOTAL_BYTES) {
+      combinedContext += '\n=== CONTEXT NOTICE ===\nFull-file context limit reached; some changed files were omitted.\n';
+      break;
+    }
+
+    combinedContext += section;
+    totalBytes += sectionBytes;
+  }
+
+  return combinedContext || undefined;
+}
+
 // ─── Helper compartilhado de UI ───────────────────────────────────────────────
 function printVerdict(spinner: ReturnType<typeof ora>, result: FinalReport): void {
   spinner.stop();
@@ -91,6 +141,7 @@ const __dirname = path.dirname(__filename);
 
 // Carrega o .env da pasta onde o CLI foi instalado (A.L.E.X raiz)
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+const defaultModel = getDefaultModel();
 
 if (!process.env.GEMINI_API_KEY) {
   console.error(pc.red('Erro: GEMINI_API_KEY não configurada!'));
@@ -108,7 +159,7 @@ program
 program
   .command('review')
   .description('Analisa as modificações locais (git diff) usando o conselho de especialistas.')
-  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', process.env.ALEX_MODEL || 'gemini-3.1-pro-preview')
+  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .action(async (options) => {
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Review Iniciado\n')));
 
@@ -131,18 +182,18 @@ program
       process.exit(0);
     }
 
-    const modelToUse = options.model || 'gemini-3.1-pro-preview';
+    const modelToUse = options.model || defaultModel;
     spinner.text = `Analisando código com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
 
     const orchestrator = new ReviewOrchestrator(modelToUse);
     
     const request = {
-      streamId: crypto.randomUUID(),
       metadata: {
         stack: "Auto-detected",
         project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
       },
-      diff: diffContent
+      diff: sanitizeDiff(diffContent),
+      sourceCode: await getChangedFilesContext(diffContent)
     };
 
     try {
@@ -183,7 +234,7 @@ program
 program
   .command('analyze <caminho>')
   .description('Analisa um arquivo de código completo estruturalmente.')
-  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', process.env.ALEX_MODEL || 'gemini-3.1-pro-preview')
+  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .action(async (caminho, options) => {
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Analysis Iniciado\n')));
 
@@ -204,11 +255,8 @@ program
     }
 
     // 2. Data Leakage Blocklist (expandida) — usa resolvedPath para prevenir bypass por symlink
-    const ext = path.extname(resolvedPath!).toLowerCase();
-    const blockedExtensions = ['.env', '.pem', '.key', '.pfx', '.sqlite', '.db', '.p12', '.crt', '.cer', '.pub'];
-    const blockedBaseNames = ['.env', '.npmrc', '.netrc', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa'];
     const baseName = path.basename(resolvedPath!);
-    if (blockedExtensions.includes(ext) || blockedBaseNames.some(b => baseName === b || baseName.startsWith('.env'))) {
+    if (isBlockedSensitivePath(resolvedPath!)) {
       console.error(pc.red(`Erro de Segurança: Arquivo bloqueado pela política contra vazamento de segredos (${baseName}).`));
       process.exit(1);
     }
@@ -247,13 +295,12 @@ program
     // Formatando no payload para simular um arquivo único lido
     const sourceCodePayload = `=== File: ${caminho} ===\n${fileContent}`;
 
-    const modelToUse = options.model || 'gemini-3.1-pro-preview';
+    const modelToUse = options.model || defaultModel;
     spinner.text = `Analisando arquivo com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
 
     const orchestrator = new ReviewOrchestrator(modelToUse);
     
     const request = {
-      streamId: crypto.randomUUID(),
       metadata: {
         stack: "Auto-detected",
         project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
