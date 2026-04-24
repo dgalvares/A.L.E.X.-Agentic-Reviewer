@@ -1,10 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { ReviewOrchestrator } from './orchestrator.js';
 import crypto from 'crypto';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,7 +30,8 @@ app.post('/v1/analyze', async (req, res) => {
   };
 
   try {
-    const orchestrator = new ReviewOrchestrator();
+    const requestedModel = metadata?.model || process.env.ALEX_MODEL;
+    const orchestrator = new ReviewOrchestrator(requestedModel);
     const rawResult = await orchestrator.analyze(request);
     
     // Parse the JSON result from the Orchestrator

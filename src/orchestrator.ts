@@ -1,5 +1,5 @@
 import { InMemoryRunner, stringifyContent } from '@google/adk';
-import { rootAgent } from './agent.js';
+import { createRootAgent } from './agent.js';
 import { CodeDiff } from './schemas/contracts.js';
 
 /**
@@ -10,10 +10,10 @@ export class ReviewOrchestrator {
   private runner: InMemoryRunner;
   private appName = 'ALEX-Core';
 
-  constructor() {
+  constructor(model?: string) {
     // No ADK TS, o construtor recebe um objeto
     this.runner = new InMemoryRunner({
-      agent: rootAgent,
+      agent: createRootAgent(model),
       appName: this.appName
     });
   }

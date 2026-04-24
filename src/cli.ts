@@ -32,7 +32,8 @@ program
 program
   .command('review')
   .description('Analisa as modificações locais (git diff) usando o conselho de especialistas.')
-  .action(async () => {
+  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', process.env.ALEX_MODEL || 'gemini-2.5-pro')
+  .action(async (options) => {
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Review Iniciado\n')));
 
     const spinner = ora('Capturando git diff local...').start();
@@ -51,9 +52,10 @@ program
       process.exit(0);
     }
 
-    spinner.text = 'Analisando código com o Conselho de Especialistas (gemini-2.0-flash)... Isso pode levar alguns segundos.';
+    const modelToUse = options.model || 'gemini-2.5-pro';
+    spinner.text = `Analisando código com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
 
-    const orchestrator = new ReviewOrchestrator();
+    const orchestrator = new ReviewOrchestrator(modelToUse);
     
     const request = {
       streamId: crypto.randomUUID(),

@@ -1,6 +1,6 @@
 import { LlmAgent, ParallelAgent, SequentialAgent } from '@google/adk';
 import { Schema, Type } from '@google/genai';
-import { securityAuditor, cleanCoder, sreAgent, businessProxy, securityReviewer, performanceReviewer } from './agents/specialists.js';
+import { getSecurityAuditor, getCleanCoder, getSreAgent, getBusinessProxy, getSecurityReviewer, getPerformanceReviewer } from './agents/specialists.js';
 
 const finalReportSchema: Schema = {
   type: Type.OBJECT,
@@ -39,32 +39,33 @@ const finalReportSchema: Schema = {
   required: ['streamId', 'verdict', 'summary', 'issues', 'timestamp']
 };
 
-/**
- * 1. Definindo o Conselho de Especialistas (Execução Sequencial para evitar Rate Limit 429)
- */
-const councilParallel = new SequentialAgent({
-  name: 'council-parallel',
-  description: 'Executa a análise de todos os especialistas sequencialmente.',
-  subAgents: [securityAuditor, cleanCoder, sreAgent, businessProxy],
-});
+export const createRootAgent = (model: string = process.env.ALEX_MODEL || 'gemini-2.5-pro') => {
+  /**
+   * 1. Definindo o Conselho de Especialistas (Execução Paralela)
+   */
+  const councilParallel = new ParallelAgent({
+    name: 'council-parallel',
+    description: 'Executa a análise de todos os especialistas simultaneamente.',
+    subAgents: [getSecurityAuditor(model), getCleanCoder(model), getSreAgent(model), getBusinessProxy(model)],
+  });
 
-/**
- * 2. Fase de Reflexão (Cross-Review Sequencial)
- */
-const reflectionParallel = new SequentialAgent({
-  name: 'reflection-parallel',
-  description: 'Especialistas revisam os achados uns dos outros.',
-  subAgents: [securityReviewer, performanceReviewer],
-});
+  /**
+   * 2. Fase de Reflexão (Cross-Review Paralelo)
+   */
+  const reflectionParallel = new ParallelAgent({
+    name: 'reflection-parallel',
+    description: 'Especialistas revisam os achados uns dos outros.',
+    subAgents: [getSecurityReviewer(model), getPerformanceReviewer(model)],
+  });
 
-/**
- * 3. Agente de Consolidação (The Architect)
- */
-const consolidator = new LlmAgent({
-  name: 'architect-consolidator',
-  model: 'gemini-2.0-flash',
-  description: 'Consolida o relatório final.',
-  instruction: `Você é o "Architect". Sua missão é consolidar o relatório final em JSON estrito.
+  /**
+   * 3. Agente de Consolidação (The Architect)
+   */
+  const consolidator = new LlmAgent({
+    name: 'architect-consolidator',
+    model: model,
+    description: 'Consolida o relatório final.',
+    instruction: `Você é o "Architect". Sua missão é consolidar o relatório final em JSON estrito.
 Analise os achados iniciais e as críticas da fase de reflexão injetados abaixo.
 Resolva conflitos e emita o veredito (PASS, FAIL, WARN). Se houver apontamentos com severidade Blocker, o veredito deve ser FAIL.
 
@@ -78,15 +79,16 @@ Resolva conflitos e emita o veredito (PASS, FAIL, WARN). Se houver apontamentos 
 - Revisão de Segurança: {security_critique?}
 - Revisão de Performance: {performance_critique?}
 `,
-  outputSchema: finalReportSchema,
-});
+    outputSchema: finalReportSchema,
+  });
 
-/**
- * 4. Pipeline Principal
- * Triage -> Parallel Analysis -> Reflection -> Consolidation
- */
-export const rootAgent = new SequentialAgent({
-  name: 'alex-orchestrator-pipeline',
-  description: 'Workflow completo com reflexão do A.L.E.X.',
-  subAgents: [councilParallel, reflectionParallel, consolidator],
-});
+  /**
+   * 4. Pipeline Principal
+   * Triage -> Parallel Analysis -> Reflection -> Consolidation
+   */
+  return new SequentialAgent({
+    name: 'alex-orchestrator-pipeline',
+    description: 'Workflow completo com reflexão do A.L.E.X.',
+    subAgents: [councilParallel, reflectionParallel, consolidator],
+  });
+};

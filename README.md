@@ -36,13 +36,13 @@ O A.L.E.X opera sob o padrão de **Delegação**, orquestrando um conselho de ag
 
 ## 🛠️ Stack Tecnológica (The X-ray Engine)
 
-| Componente | Tecnologia | Detalhes |
-| :--- | :--- | :--- |
-| **Language** | **TypeScript** | Tipagem estrita para contratos de IA. |
-| **Framework** | **Google ADK** | `@google/adk` para core, `@google/adk-devtools` para CLI/Web. |
-| **API Framework** | **Fastify / Express** | Exposição do serviço de forma agnóstico. |
-| **Reasoning** | **Gemini 2.0 Flash** | Multimodalidade e alta janela de contexto via Vertex AI. |
-| **Intelligence** | **Vector Search** | RAG para padrões de arquitetura e segurança. |
+| Componente             | Tecnologia              | Detalhes                                                               |
+| :---                   | :---                    | :---                                                                   |
+| **Language**           | **TypeScript**          | Tipagem estrita para contratos de IA.                                  |
+| **Framework**          | **Google ADK**          | `@google/adk` para core, `@google/adk-devtools` para CLI/Web.          |
+| **API Framework**      | **Fastify / Express**   | Exposição do serviço de forma agnóstico.                               |
+| **Reasoning**          | **Gemini 2.5 Pro**      | Multimodalidade e estabilidade em requisições paralelas.               |
+| **Intelligence**       | **Vector Search**       | RAG para padrões de arquitetura e segurança.                           |
 
 ---
 
@@ -53,6 +53,9 @@ Para garantir o funcionamento pleno das ferramentas de streaming e orquestraçã
 - **Node.js:** `^24.13.0` ou superior.
 - **NPM:** `^11.8.0` ou superior.
 - **Google Cloud SDK:** Configurado (opcional para Vertex AI).
+
+> [!WARNING]
+> **Requisito de Modelo LLM (Rate Limits):** Devido à natureza paralela do *"Council of Agents"*, recomenda-se estritamente a utilização do modelo **gemini-2.5-pro** como requisito mínimo e fallback padrão. O modelo *gemini-2.0-flash*, mesmo em tiers mais altos, costuma apresentar falhas (HTTP 429) por exaustão de cota de requisições simultâneas ao orquestrar a delegação de tarefas do A.L.E.X.
 
 ---
 
