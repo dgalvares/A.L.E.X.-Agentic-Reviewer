@@ -18,8 +18,10 @@ test('formatReportMarkdown renders verdict, summary and issues', () => {
     timestamp: '2026-04-24T21:00:00.000Z',
   }, 'Titulo');
 
-  assert.match(markdown, /## Titulo/);
+  assert.match(markdown, /## ⚠️ Titulo/);
   assert.match(markdown, /\*\*Veredito:\*\* WARN/);
+  assert.match(markdown, /\| Severidade \| Origem \| Local \| Mensagem \|/);
+  assert.match(markdown, /<summary>Ver detalhes dos apontamentos<\/summary>/);
   assert.match(markdown, /src\/server\.ts:10/);
   assert.match(markdown, /const ok = true;/);
 });

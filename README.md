@@ -1,4 +1,4 @@
-# 🛡️ A.L.E.X (Advanced Logic Evaluation X-ray)
+﻿# 🛡️ A.L.E.X (Advanced Logic Evaluation X-ray)
 
 > **Status:** ✅ Production Ready | **Engine:** Multi-Agent Reasoning (Google ADK) | **Model:** gemini-2.5-pro
 
@@ -254,7 +254,7 @@ npx adk web
 # http://localhost:8000
 ```
 
-### GitHub Actions — `@alex`
+### GitHub Actions — `alex review`
 Existem dois templates:
 
 - `.github/workflows/alex-pr-review.yml`: usado neste repositório, buildando o A.L.E.X localmente.
@@ -263,7 +263,7 @@ Existem dois templates:
 O workflow consumidor permite acionar o A.L.E.X em PRs:
 
 - manualmente via `workflow_dispatch` informando `pr_number`;
-- por comentário contendo `@alex` no PR ou em review comments.
+- por comentário contendo `alex review` no PR ou em review comments.
 
 Configure o secret `GEMINI_API_KEY` no repositório. Opcionalmente, configure a variável `ALEX_MODEL` para trocar o modelo padrão.
 
@@ -273,7 +273,7 @@ gh pr diff <PR> > pr.diff
 alex ci --diff-file pr.diff --output-file alex-review.md --pr-number <PR>
 ```
 
-Comentários `@alex` só executam para usuários com permissão `write`, `maintain` ou `admin`, evitando consumo indevido da chave em repositórios públicos.
+Comentários `alex review` só executam para usuários com permissão `write`, `maintain` ou `admin`, evitando consumo indevido da chave em repositórios públicos.
 
 ### Publicação no npm
 

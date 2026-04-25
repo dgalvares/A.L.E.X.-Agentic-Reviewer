@@ -7,6 +7,7 @@ Este backlog registra debitos reais que devem ser tratados sem inflar o escopo d
 - **ARCH-01:** Separar a CLI em servicos menores (`git diff`, leitura de arquivo, renderizacao de resultado).
 - **ARCH-02:** Centralizar configuracao runtime em um modulo unico para CLI, API e ADK.
 - **ARCH-03:** Avaliar callbacks nativos do ADK para rastrear transicoes de agentes e chamadas de ferramentas.
+- **ARCH-04:** Planejar suporte multi-provider para LLMs alem do Gemini. Detalhes em [`BACKLOG_MULTI_PROVIDER.md`](./BACKLOG_MULTI_PROVIDER.md).
 
 ## Infra
 
