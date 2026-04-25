@@ -11,29 +11,82 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { extractAndParseJSON } from './utils/parser.js';
 import { FinalReport, FinalReportSchema } from './schemas/contracts.js';
-import { getDefaultModel } from './config.js';
+import { applyStoredConfigToEnv, getConfigPath, getDefaultModel, getGeminiApiKey, readUserConfig, updateUserConfig } from './config.js';
 import { extractCodeMetadata } from './tools/diff_tools.js';
 import { sanitizeDiff } from './utils/diff_sanitizer.js';
 import { isBlockedSensitivePath } from './utils/sensitive_paths.js';
+import { formatReportMarkdown } from './utils/report_formatter.js';
 
 /** Lê o git diff via spawn com stream limitado a evitar OOM/DoS */
 const MAX_DIFF_BYTES = 10 * 1024 * 1024;  // 10MB stdout
 const MAX_STDERR_BYTES = 64 * 1024;       // 64KB stderr — evita OOM em erros verbosos
 const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 const MAX_CONTEXT_TOTAL_BYTES = 2 * 1024 * 1024;
+const MAX_CONTEXT_FILES = 50;
+const GIT_DIFF_TIMEOUT_MS = 30_000;
+
+function getSanitizedChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.GEMINI_API_KEY;
+  delete env.GOOGLE_API_KEY;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.OPENAI_API_KEY;
+  return env;
+}
+
+function isWithinDirectory(basePath: string, targetPath: string): boolean {
+  const relative = path.relative(basePath, targetPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+async function resolveExistingFileWithinCwd(inputPath: string): Promise<string> {
+  const cwdReal = await fs.promises.realpath(process.cwd());
+  const resolvedPath = path.resolve(process.cwd(), inputPath);
+  const realPath = await fs.promises.realpath(resolvedPath);
+
+  if (!isWithinDirectory(cwdReal, realPath)) {
+    throw new Error(`Caminho fora do projeto: ${inputPath}`);
+  }
+
+  return realPath;
+}
+
+async function resolveOutputFileWithinCwd(inputPath: string): Promise<string> {
+  const cwdReal = await fs.promises.realpath(process.cwd());
+  const resolvedPath = path.resolve(process.cwd(), inputPath);
+
+  if (!isWithinDirectory(cwdReal, resolvedPath)) {
+    throw new Error(`Caminho fora do projeto: ${inputPath}`);
+  }
+
+  const outputDir = path.dirname(resolvedPath);
+  await fs.promises.mkdir(outputDir, { recursive: true });
+  const outputDirReal = await fs.promises.realpath(outputDir);
+  if (!isWithinDirectory(cwdReal, outputDirReal)) {
+    throw new Error(`Caminho fora do projeto: ${inputPath}`);
+  }
+
+  return path.join(outputDirReal, path.basename(resolvedPath));
+}
 
 async function getGitDiff(): Promise<string> {
   return new Promise((resolve, reject) => {
     // encoding não é suportado no tipo ChildProcessWithoutNullStreams; usamos Buffer
-    const proc = spawn('git', ['diff', 'HEAD']);
+    const proc = spawn('git', ['diff', '--no-ext-diff', 'HEAD'], {
+      env: getSanitizedChildEnv(),
+    });
     const chunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let totalBytes = 0;
     let totalStderrBytes = 0;
     let settled = false; // Flag para evitar race condition após SIGKILL
+    const timeout = setTimeout(() => {
+      proc.kill('SIGKILL');
+      finish(() => reject(new Error(`git diff excedeu o timeout de ${GIT_DIFF_TIMEOUT_MS / 1000}s.`)));
+    }, GIT_DIFF_TIMEOUT_MS);
 
     const finish = (fn: () => void) => {
-      if (!settled) { settled = true; fn(); }
+      if (!settled) { settled = true; clearTimeout(timeout); fn(); }
     };
 
     proc.stdout.on('data', (chunk: Buffer) => {
@@ -55,11 +108,12 @@ async function getGitDiff(): Promise<string> {
     });
 
     proc.on('close', (code) => {
-      if (code !== 0 && chunks.length === 0) {
-        finish(() => reject(new Error(Buffer.concat(stderrChunks).toString('utf-8') || `git diff saiu com código ${code}`)));
-      } else {
-        finish(() => resolve(Buffer.concat(chunks).toString('utf-8')));
+      if (code !== 0) {
+        finish(() => reject(new Error(Buffer.concat(stderrChunks).toString('utf-8') || `git diff saiu com codigo ${code}`)));
+        return;
       }
+
+      finish(() => resolve(Buffer.concat(chunks).toString('utf-8')));
     });
     proc.on('error', (err) => finish(() => reject(err)));
   });
@@ -71,7 +125,8 @@ async function getChangedFilesContext(diffContent: string): Promise<string | und
   let combinedContext = '';
   let totalBytes = 0;
 
-  for (const file of metadata.files) {
+  const files = metadata.files.slice(0, MAX_CONTEXT_FILES);
+  for (const file of files) {
     const targetPath = path.resolve(process.cwd(), file);
     let resolvedPath: string;
 
@@ -106,6 +161,10 @@ async function getChangedFilesContext(diffContent: string): Promise<string | und
     totalBytes += sectionBytes;
   }
 
+  if (metadata.files.length > MAX_CONTEXT_FILES) {
+    combinedContext += `\n=== CONTEXT NOTICE ===\nFile context limit reached; only the first ${MAX_CONTEXT_FILES} changed files were inspected.\n`;
+  }
+
   return combinedContext || undefined;
 }
 
@@ -134,19 +193,116 @@ function printVerdict(spinner: ReturnType<typeof ora>, result: FinalReport): voi
     });
   }
 }
+
+async function runAnalysis(request: {
+  metadata: { stack: string; project: string };
+  diff?: string;
+  sourceCode?: string;
+}, model: string): Promise<FinalReport> {
+  const orchestrator = new ReviewOrchestrator(model);
+  const rawResult = await orchestrator.analyze(request);
+  const parsed = extractAndParseJSON(rawResult);
+  const validation = FinalReportSchema.safeParse(parsed);
+
+  if (!validation.success) {
+    throw new Error(`Contrato de resposta invalido: ${validation.error.message}`);
+  }
+
+  return validation.data;
+}
+
+async function writeReportFile(filePath: string, content: string): Promise<void> {
+  try {
+    const stat = await fs.promises.lstat(filePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Recusando escrever em symlink: ${filePath}`);
+    }
+  } catch (error: unknown) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+      throw error;
+    }
+  }
+
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW;
+  const handle = await fs.promises.open(filePath, flags, 0o600);
+  try {
+    await handle.writeFile(content, 'utf-8');
+  } finally {
+    await handle.close();
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Carrega o .env da pasta onde o CLI foi instalado (A.L.E.X raiz)
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../.env'), quiet: true });
+applyStoredConfigToEnv();
 const defaultModel = getDefaultModel();
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error(pc.red('Erro: GEMINI_API_KEY não configurada!'));
-  console.log(pc.yellow('Crie um arquivo .env na raiz do projeto A.L.E.X ou exporte a variável globalmente.'));
+function ensureGeminiApiKey(): void {
+  if (getGeminiApiKey()) return;
+
+  console.error(pc.red('Erro: GEMINI_API_KEY não configurada.'));
+  console.log(pc.yellow('Execute `alex config set-key` ou exporte GEMINI_API_KEY no ambiente.'));
   process.exit(1);
+}
+
+async function promptHidden(question: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
+    throw new Error('Entrada interativa indisponivel. Use GEMINI_API_KEY no ambiente para execucoes nao interativas.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    let value = '';
+    let ignoringEscapeSequence = false;
+    const cleanup = () => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+    };
+    const finish = () => {
+      cleanup();
+      process.stdout.write('\n');
+      resolve(value);
+    };
+    const abort = () => {
+      cleanup();
+      process.stdout.write('\n');
+      reject(new Error('Entrada cancelada.'));
+    };
+    const onData = (chunk: Buffer) => {
+      const input = chunk.toString('utf-8');
+      for (const char of input) {
+        const code = char.charCodeAt(0);
+        if (code === 3) return abort();
+        if (code === 27) {
+          ignoringEscapeSequence = true;
+          continue;
+        }
+        if (ignoringEscapeSequence) {
+          if (code >= 64 && code <= 126) ignoringEscapeSequence = false;
+          continue;
+        }
+        if (code === 13 || code === 10) return finish();
+        if (code === 8 || code === 127) {
+          value = value.slice(0, -1);
+          continue;
+        }
+        if (code < 32 || code > 126) {
+          continue;
+        }
+        value += char;
+      }
+    };
+
+    process.stdout.write(question);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('data', onData);
+  });
 }
 
 const program = new Command();
@@ -156,11 +312,59 @@ program
   .description('A.L.E.X (Advanced Logic Evaluation X-ray) CLI')
   .version('1.0.0');
 
+const configCommand = program
+  .command('config')
+  .description('Gerencia a configuração global do A.L.E.X CLI.');
+
+configCommand
+  .command('set-key')
+  .description('Salva a GEMINI_API_KEY no perfil do usuario usando entrada oculta.')
+  .action(async () => {
+    let geminiApiKey: string;
+    try {
+      geminiApiKey = (await promptHidden('GEMINI_API_KEY: ')).trim();
+    } catch (error: unknown) {
+      console.error(pc.red(error instanceof Error ? error.message : 'Falha ao ler GEMINI_API_KEY.'));
+      process.exit(1);
+    }
+
+    if (!geminiApiKey) {
+      console.error(pc.red('GEMINI_API_KEY vazia. Configuracao nao alterada.'));
+      process.exit(1);
+    }
+
+    updateUserConfig({ geminiApiKey });
+    console.log(pc.green(`GEMINI_API_KEY salva em ${getConfigPath()}`));
+  });
+configCommand
+  .command('set-model <model>')
+  .description('Define o modelo padrão do A.L.E.X CLI.')
+  .action((model) => {
+    updateUserConfig({ model });
+    console.log(pc.green(`Modelo padrão salvo: ${model}`));
+  });
+
+configCommand
+  .command('show')
+  .description('Mostra a configuração ativa sem exibir segredos.')
+  .action(() => {
+    const userConfig = readUserConfig();
+    const activeModel = getDefaultModel();
+    const hasKey = Boolean(getGeminiApiKey());
+    const keySource = process.env.GEMINI_API_KEY ? 'env' : (userConfig.geminiApiKey ? 'user-config' : 'missing');
+    const modelSource = process.env.ALEX_MODEL ? 'env' : (userConfig.model ? 'user-config' : 'fallback');
+
+    console.log(`Config path: ${getConfigPath()}`);
+    console.log(`GEMINI_API_KEY: ${hasKey ? `configured (${keySource})` : 'missing'}`);
+    console.log(`ALEX_MODEL: ${activeModel} (${modelSource})`);
+  });
+
 program
   .command('review')
   .description('Analisa as modificações locais (git diff) usando o conselho de especialistas.')
   .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .action(async (options) => {
+    ensureGeminiApiKey();
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Review Iniciado\n')));
 
     const spinner = ora('Capturando git diff local...').start();
@@ -193,7 +397,7 @@ program
         project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
       },
       diff: sanitizeDiff(diffContent),
-      sourceCode: await getChangedFilesContext(diffContent)
+      sourceCode: sanitizeDiff(await getChangedFilesContext(diffContent) || '')
     };
 
     try {
@@ -236,6 +440,7 @@ program
   .description('Analisa um arquivo de código completo estruturalmente.')
   .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .action(async (caminho, options) => {
+    ensureGeminiApiKey();
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Analysis Iniciado\n')));
 
     const targetPath = path.resolve(process.cwd(), caminho);
@@ -305,7 +510,7 @@ program
         stack: "Auto-detected",
         project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
       },
-      sourceCode: sourceCodePayload
+      sourceCode: sanitizeDiff(sourceCodePayload)
     };
 
     try {
@@ -338,6 +543,61 @@ program
            console.error(pc.red(error.message));
         }
       }
+      process.exit(1);
+    }
+  });
+
+program
+  .command('ci')
+  .description('Analisa um diff de PR em CI e gera relatorio Markdown ou JSON para GitHub Actions.')
+  .requiredOption('--diff-file <arquivo>', 'Arquivo contendo o diff do PR.')
+  .option('--output-file <arquivo>', 'Arquivo de saida do relatorio.', 'alex-review.md')
+  .option('--format <formato>', 'Formato de saida: markdown ou json.', 'markdown')
+  .option('--project <nome>', 'Nome do projeto/repositorio.', process.cwd().split(/[\/\\]/).pop() || 'local-workspace')
+  .option('--pr-number <numero>', 'Numero do PR para enriquecer o titulo.')
+  .option('-m, --model <modelo>', 'Modelo LLM para utilizar na analise', defaultModel)
+  .option('--fail-on-fail', 'Retorna exit code 1 quando o veredito for FAIL.')
+  .action(async (options) => {
+    ensureGeminiApiKey();
+    const modelToUse = options.model || defaultModel;
+
+    try {
+      const diffPath = await resolveExistingFileWithinCwd(options.diffFile);
+      const outputPath = await resolveOutputFileWithinCwd(options.outputFile);
+      const stat = await fs.promises.stat(diffPath);
+      if (!stat.isFile() || stat.size > MAX_DIFF_BYTES) {
+        throw new Error(`Arquivo de diff invalido ou maior que ${MAX_DIFF_BYTES / 1024 / 1024}MB.`);
+      }
+
+      const diffContent = await fs.promises.readFile(diffPath, 'utf-8');
+      if (!diffContent.trim()) {
+        throw new Error('Arquivo de diff vazio.');
+      }
+
+      const request = {
+        metadata: {
+          stack: 'Auto-detected',
+          project: options.project,
+        },
+        diff: sanitizeDiff(diffContent),
+        sourceCode: sanitizeDiff(await getChangedFilesContext(diffContent) || ''),
+      };
+
+      const result = await runAnalysis(request, modelToUse);
+      const title = options.prNumber ? `A.L.E.X Code Review - PR #${options.prNumber}` : 'A.L.E.X Code Review';
+      const output = options.format === 'json'
+        ? JSON.stringify(result, null, 2)
+        : formatReportMarkdown(result, title);
+
+      await writeReportFile(outputPath, output);
+      console.log(`[ALEX] Relatorio gerado em ${outputPath}`);
+      console.log(`[ALEX] Veredito: ${result.verdict}`);
+
+      if (options.failOnFail && result.verdict === 'FAIL') {
+        process.exit(1);
+      }
+    } catch (error: unknown) {
+      console.error(pc.red(error instanceof Error ? error.message : 'Falha inesperada no modo CI.'));
       process.exit(1);
     }
   });

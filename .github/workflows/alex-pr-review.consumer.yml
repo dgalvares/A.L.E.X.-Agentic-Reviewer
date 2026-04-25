@@ -1,0 +1,124 @@
+name: A.L.E.X PR Review
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze'
+        required: true
+        type: number
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  alex-pr-review:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@alex')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@alex'))
+
+    steps:
+      - name: Resolve PR number
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+          elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+            PR_NUM="${{ github.event.issue.number }}"
+          elif [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+          fi
+
+          echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Check trigger permission
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission" -q '.permission' 2>/dev/null || echo "none")
+          case "$PERMISSION" in
+            admin|maintain|write) echo "allowed=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "allowed=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Checkout repository
+        if: steps.permission.outputs.allowed == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout PR branch
+        if: steps.permission.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh pr checkout "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}"
+
+      - name: Setup Node.js
+        if: steps.permission.outputs.allowed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install A.L.E.X CLI
+        if: steps.permission.outputs.allowed == 'true'
+        run: npm install -g @dgalvarestec/alex
+
+      - name: Capture PR diff
+        if: steps.permission.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh pr diff "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" > pr.diff
+
+      - name: Run A.L.E.X
+        if: steps.permission.outputs.allowed == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ALEX_MODEL: ${{ vars.ALEX_MODEL || 'gemini-2.5-pro' }}
+        run: |
+          alex ci \
+            --diff-file pr.diff \
+            --output-file alex-review.md \
+            --format markdown \
+            --project "${{ github.repository }}" \
+            --pr-number "${{ steps.pr.outputs.number }}"
+
+      - name: Comment review on PR
+        if: steps.permission.outputs.allowed == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUM: ${{ steps.pr.outputs.number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const prNum = Number(process.env.PR_NUM);
+            const review = fs.readFileSync('alex-review.md', 'utf8');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNum,
+              body: review
+            });

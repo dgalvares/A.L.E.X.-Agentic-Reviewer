@@ -1,18 +1,47 @@
 {
-  "name": "a.l.e.x",
+  "name": "@dgalvarestec/alex",
   "version": "1.0.0",
   "description": "A.L.E.X code review microservice powered by Google ADK multi-agent reasoning",
   "bin": {
     "alex": "./dist/cli.js"
   },
-  "main": "index.js",
+  "main": "./dist/agent.js",
+  "types": "./dist/agent.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/unit/*.test.mjs",
+    "prepack": "npm run build",
     "start:api": "node dist/server.js"
   },
-  "keywords": [],
+  "engines": {
+    "node": ">=24.13.0",
+    "npm": ">=11.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "ai",
+    "code-review",
+    "github-actions",
+    "gemini",
+    "google-adk",
+    "multi-agent"
+  ],
   "author": "DgAlvaresTEC",
   "license": "MIT",
   "type": "module",

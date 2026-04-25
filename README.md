@@ -87,6 +87,32 @@ O A.L.E.X opera sob o padrão de **Delegação Paralela**, orquestrando um conse
 
 ## 🚀 Quick Start
 
+### Usar como CLI publicada
+
+```bash
+npm install -g @dgalvarestec/alex
+alex review
+```
+
+Para instalar direto deste repositório antes da publicação no npm:
+
+```bash
+npm install -g github:DgAlvaresTEC/A.L.E.X
+```
+
+Faça o setup uma única vez:
+
+```bash
+alex config set-key
+alex config set-model gemini-2.5-pro
+alex config show
+```
+
+O CLI salva essa configuração em `~/.alex/config.json`. Variáveis de ambiente continuam tendo prioridade, então CI/CD pode usar `GEMINI_API_KEY` e `ALEX_MODEL` normalmente.
+O comando `alex config set-key` solicita a chave em modo oculto, sem gravá-la no histórico do shell.
+
+### Desenvolvimento local
+
 ### 1. Instalação de Dependências
 
 ```bash
@@ -226,6 +252,59 @@ Interface visual para inspecionar o fluxo de raciocínio dos agentes.
 ```bash
 npx adk web
 # http://localhost:8000
+```
+
+### GitHub Actions — `@alex`
+Existem dois templates:
+
+- `.github/workflows/alex-pr-review.yml`: usado neste repositório, buildando o A.L.E.X localmente.
+- `.github/workflows/alex-pr-review.consumer.yml`: copie para outros repositórios; ele instala `@dgalvarestec/alex` como CLI global.
+
+O workflow consumidor permite acionar o A.L.E.X em PRs:
+
+- manualmente via `workflow_dispatch` informando `pr_number`;
+- por comentário contendo `@alex` no PR ou em review comments.
+
+Configure o secret `GEMINI_API_KEY` no repositório. Opcionalmente, configure a variável `ALEX_MODEL` para trocar o modelo padrão.
+
+O workflow consumidor executa:
+```bash
+gh pr diff <PR> > pr.diff
+alex ci --diff-file pr.diff --output-file alex-review.md --pr-number <PR>
+```
+
+Comentários `@alex` só executam para usuários com permissão `write`, `maintain` ou `admin`, evitando consumo indevido da chave em repositórios públicos.
+
+### Publicação no npm
+
+O repositório possui um fluxo de publicação similar ao BonifiQ-CLI:
+
+- `.github/workflows/publish.yml`: bump de versão, validação, `npm publish`, commit do bump e tag `vX.Y.Z`.
+- `.github/workflows/release.yml`: cria GitHub Release quando uma tag `v*` é publicada.
+- `.github/workflows/preview-manual.yml`: gera um `.tgz` preview como artifact, sem publicar.
+
+Configure o secret:
+
+```text
+NPM_TOKEN
+```
+
+Publicação manual:
+
+1. Abra **Actions > Publish npm package**.
+2. Execute `workflow_dispatch`.
+3. Escolha o bump: `patch`, `minor` ou `major`.
+
+Publicação automática:
+
+- Push em `main` ou `master` publica um patch, exceto commits do `github-actions[bot]`.
+
+Publicação local, se precisar:
+
+```bash
+npm login
+npm pack --dry-run
+npm publish --access public
 ```
 
 ---

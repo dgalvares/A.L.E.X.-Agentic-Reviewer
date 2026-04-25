@@ -1,0 +1,111 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          BUMP_TYPE="${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}"
+
+          NEW_VERSION=$(node - <<'NODE' "$CURRENT_VERSION" "$BUMP_TYPE"
+          const version = process.argv[2];
+          const bump = process.argv[3];
+          const parts = version.split('.').map(Number);
+          if (parts.length !== 3 || parts.some(Number.isNaN)) {
+            throw new Error(`Invalid semver version: ${version}`);
+          }
+          if (bump === 'major') {
+            parts[0] += 1; parts[1] = 0; parts[2] = 0;
+          } else if (bump === 'minor') {
+            parts[1] += 1; parts[2] = 0;
+          } else if (bump === 'patch') {
+            parts[2] += 1;
+          } else {
+            throw new Error(`Invalid bump type: ${bump}`);
+          }
+          console.log(parts.join('.'));
+          NODE
+          )
+
+          npm version "$NEW_VERSION" --no-git-tag-version
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          echo "Bumped $CURRENT_VERSION -> $NEW_VERSION ($BUMP_TYPE)"
+
+      - name: Validate
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Pack dry run
+        run: npm pack --dry-run
+
+      - name: Commit version bump and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: release v${{ steps.version.outputs.version }} [skip ci]"
+          git tag "v${{ steps.version.outputs.version }}"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Push version bump and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="${GITHUB_REF_NAME}"
+          git push origin "HEAD:${BRANCH}"
+          git push origin "v${{ steps.version.outputs.version }}"
