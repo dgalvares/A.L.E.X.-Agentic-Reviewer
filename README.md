@@ -1,10 +1,10 @@
 # 🛡️ A.L.E.X. Agentic Reviewer
 > **Agentic Logic Evaluation X-ray**
-> > *The multi-agent council for deep code analysis and automated review.*
+> *The multi-agent council for deep code analysis and automated review.*
 
 > **Status:** ✅ Production Ready | **Engine:** Multi-Agent Reasoning (Google ADK) | **Model:** gemini-2.5-pro
 
-**A.L.E.X** é um framework de análise diagnóstica profunda que realiza a "radiografia" técnica e lógica de sistemas complexos. Diferente de linters tradicionais, o A.L.E.X opera como um **Micro-serviço de Inteligência**, aplicando heurísticas de avaliação em múltiplas camadas para identificar falhas estruturais, vulnerabilidades de segurança e oportunidades de otimização arquitetural.
+**A.L.E.X. Agentic Reviewer** é um framework de análise diagnóstica profunda que realiza a "radiografia" técnica e lógica de sistemas complexos. Diferente de linters tradicionais, o A.L.E.X opera como um **Micro-serviço de Inteligência**, aplicando heurísticas de avaliação em múltiplas camadas para identificar falhas estruturais, vulnerabilidades de segurança e oportunidades de otimização arquitetural.
 
 O próprio código do A.L.E.X é validado continuamente por seus agentes (`alex review`) — cada melhoria de segurança e qualidade neste repositório foi identificada e corrigida pelo Conselho de Agentes que ele hospeda.
 

@@ -1,7 +1,7 @@
 {
   "name": "@dgalvarestec/alex",
   "version": "1.0.5",
-  "description": "A.L.E.X code review microservice powered by Google ADK multi-agent reasoning",
+  "description": "A.L.E.X. Agentic Reviewer powered by Google ADK multi-agent reasoning",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dgalvares/A.L.E.X.-Advanced-Logic-Evaluation-X-ray-.git"
