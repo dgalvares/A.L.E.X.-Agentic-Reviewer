@@ -1,0 +1,11 @@
+{
+  "id": "sre-agent",
+  "purpose": "Verify that reliability findings cover timeouts, resource limits, and operational failure modes.",
+  "cases": [
+    {
+      "name": "detects unbounded IO",
+      "input": "A command reads every changed file without total byte limits.",
+      "expected": ["resource limit", "operational safety"]
+    }
+  ]
+}

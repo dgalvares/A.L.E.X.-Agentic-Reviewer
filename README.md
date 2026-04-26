@@ -1,4 +1,4 @@
-﻿# 🛡️ A.L.E.X (Advanced Logic Evaluation X-ray)
+# 🛡️ A.L.E.X (Advanced Logic Evaluation X-ray)
 
 > **Status:** ✅ Production Ready | **Engine:** Multi-Agent Reasoning (Google ADK) | **Model:** gemini-2.5-pro
 
@@ -10,54 +10,61 @@ O próprio código do A.L.E.X é validado continuamente por seus agentes (`alex 
 
 ## 🏛️ Arquitetura Multi-Agente (The Council of Agents)
 
-O A.L.E.X opera sob o padrão de **Delegação Paralela**, orquestrando um conselho de agentes especialistas coordenados via **Google ADK**.
+O A.L.E.X opera sob o padrão de **Delegação Paralela**, orquestrando um conselho de agentes especialistas coordenados via **Google ADK**. O usuário configura apenas o catálogo de agentes de análise; revisores são derivados automaticamente quando suas dependências estão presentes.
 
 ```
                     ┌─────────────────────┐
                     │  ReviewOrchestrator │  ← Ponto de entrada (CLI / API)
                     └──────────┬──────────┘
-                               │ ParallelAgent
-          ┌────────────────────┼─────────────────────┐
-          ▼                    ▼                     ▼                    ▼
-  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-  │  Security    │   │  Clean Coder │   │  SRE Agent   │   │  Business    │
-  │  Auditor     │   │              │   │              │   │  Proxy       │
-  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-         └──────────────────┴──────────────────┴──────────────────┘
-                                       │ Cross-Review (Reflexão)
-                    ┌──────────────────┼───────────────────┐
-                    ▼                                       ▼
-           ┌─────────────────┐                  ┌─────────────────┐
-           │ Security        │                  │ Performance     │
-           │ Reviewer        │                  │ Reviewer        │
-           └─────────────────┘                  └─────────────────┘
-                                       │
-                    ┌──────────────────▼──────────────────┐
-                    │    architect-consolidator           │
-                    │  (FinalReport: PASS / WARN / FAIL)  │
-                    └─────────────────────────────────────┘
+                               │
+                               ▼
+          ┌──────────────────────────────────────────────┐
+          │ ParallelAgent: agentes de análise ativos     │
+          │ security, quality, sre, business, tests, ... │
+          └──────────────────────┬───────────────────────┘
+                                 │
+                                 ▼
+          ┌──────────────────────────────────────────────┐
+          │ ParallelAgent: revisores derivados           │
+          │ security-reviewer, performance-reviewer      │
+          └──────────────────────┬───────────────────────┘
+                                 │
+                                 ▼
+          ┌──────────────────────────────────────────────┐
+          │ architect-consolidator                       │
+          │ FinalReport: PASS / WARN / FAIL              │
+          └──────────────────────────────────────────────┘
 ```
 
 ### 👑 The Architect (Orquestrador)
 - Extrai metadados do diff/sourceCode via parser linear O(n)
-- Delega em paralelo para os 4 especialistas
+- Delega em paralelo para os agentes habilitados no perfil
+- Executa revisores apenas quando suas dependências de agentes estão presentes
 - Consolida feedbacks conflitantes em um **veredito final único**
+- Aplica retry exponencial com jitter para falhas transitórias do provedor
 
-### 🛡️ Security Auditor
-- OWASP Top 10, Path Traversal, ReDoS, Timing Attacks
-- Detecção de vazamento de credenciais e Data Leakage
+### Agentes de Análise
 
-### 🛠️ Clean Coder
-- S.O.L.I.D, DRY, Complexidade Ciclomática
-- No-Any Policy, Contract-First Development
+| Agente | Padrão | Foco |
+| :--- | :---: | :--- |
+| `security-auditor` | Sim | OWASP Top 10, path traversal, ReDoS, timing attacks, vazamento de credenciais e data leakage |
+| `clean-coder` | Sim | S.O.L.I.D, DRY, complexidade ciclomática, No-Any Policy e Contract-First Development |
+| `sre-agent` | Sim | Memory leaks, OOM, event loop blocking, timeouts, retry, rate limiting e eficiência operacional |
+| `business-proxy` | Sim | Regras de domínio via RAG dinâmico, READMEs e documentação de arquitetura local |
+| `error-handling-specialist` | Não | Caminhos de erro, fallback seguro, resiliência e falhas recuperáveis |
+| `test-strategist` | Não | Qualidade de testes, cobertura de regressão, contratos e comportamento de CI |
+| `observability-engineer` | Não | Logs, métricas, traces, debuggability e diagnóstico sem vazamento de segredo |
+| `docs-maintainer` | Não | Documentação de produto, API, operação e superfície de comandos/configuração |
+| `scalability-architect` | Não | Escalabilidade, concorrência, batching, limites de memória e crescimento de dados |
 
-### 🚀 SRE Agent
-- Memory Leaks, OOM, Event Loop blocking
-- Resiliência: timeouts, retry, rate limiting
+### Revisores Derivados
 
-### 🧠 Business Proxy
-- Valida conformidade com regras de domínio via RAG dinâmico
-- Consome READMEs e documentação de arquitetura local
+| Revisor | Dependências | Foco |
+| :--- | :--- | :--- |
+| `security-reviewer` | `sre-agent`, `clean-coder` | Revisa achados de confiabilidade e qualidade sob a ótica de segurança |
+| `performance-reviewer` | `security-auditor`, `clean-coder` | Revisa achados de segurança e qualidade sob a ótica de performance |
+
+Use `alex review all` ou `alex review --agents all` para executar todos os agentes de análise. Revisores não são habilitados diretamente pelo usuário.
 
 ---
 
@@ -155,7 +162,7 @@ npm test
 ## 💻 Modos de Uso
 
 ### CLI — `alex review`
-Analisa as modificações locais via `git diff HEAD`. Ideal para uso antes do commit.
+Analisa as modificações locais via `git diff HEAD` e inclui arquivos novos ainda `untracked` no relatório local. Ideal para uso antes do commit.
 
 ```bash
 # Com o modelo padrão (definido em .env)
@@ -188,6 +195,40 @@ Analisa um arquivo completo estruturalmente. Ideal para validar um módulo espec
 alex analyze src/services/payment.service.ts
 ```
 
+### Perfis Dinâmicos de Agentes
+
+Por padrão, `default` mantém o conselho atual. Agentes adicionais podem ser habilitados por comando, variável de ambiente ou configuração persistente:
+
+```bash
+alex review --agents default,test-strategist,error-handling-specialist
+alex review --agents all
+alex review all
+alex ci --diff-file pr.diff --agents default,docs-maintainer --disable-agents sre-agent
+alex config set-agents default,observability-engineer
+alex config set-agents all
+alex config disable-agent docs-maintainer
+```
+
+Use `all` para rodar todos os agentes de análise registrados. Agentes opt-in disponíveis: `error-handling-specialist`, `test-strategist`, `observability-engineer`, `docs-maintainer` e `scalability-architect`.
+Agentes revisores não são configuráveis pelo usuário: eles entram automaticamente quando suas dependências existem. `security-reviewer` roda quando `sre-agent` e `clean-coder` estão ativos; `performance-reviewer` roda quando `security-auditor` e `clean-coder` estão ativos.
+
+| Agente de análise | Perfil | Foco |
+|---|---|---|
+| `security-auditor` | `default` | Vulnerabilidades, conformidade e vazamento de dados |
+| `clean-coder` | `default` | Manutenibilidade, design, DRY e contratos |
+| `sre-agent` | `default` | Performance, resiliência e eficiência operacional |
+| `business-proxy` | `default` | Regras de negócio e documentação local via RAG |
+| `error-handling-specialist` | opt-in / `all` | Fail-open/fail-closed, retries, rollback e idempotência |
+| `test-strategist` | opt-in / `all` | Cobertura, regressão, casos negativos e fragilidade de testes |
+| `observability-engineer` | opt-in / `all` | Logs, métricas, traces, correlation IDs e auditabilidade |
+| `docs-maintainer` | opt-in / `all` | README, exemplos, changelog, docs de API e runbooks |
+| `scalability-architect` | opt-in / `all` | Throughput, concorrência, filas, cache e multi-instância |
+
+| Revisor automático | Dependências | Função |
+|---|---|---|
+| `security-reviewer` | `sre-agent`, `clean-coder` | Verifica se achados de performance/qualidade introduzem risco de segurança |
+| `performance-reviewer` | `security-auditor`, `clean-coder` | Verifica se achados de segurança/qualidade introduzem gargalos |
+
 > [!NOTE]
 > **Proteções de Segurança na CLI:**
 > - Path Traversal Prevention via `fs.realpath` (anti-symlink bypass)
@@ -215,7 +256,12 @@ Content-Type: application/json
 ```json
 {
   "streamId": "uuid-opcional",
-  "metadata": { "stack": ".net", "project": "MeuProjeto" },
+  "metadata": {
+    "stack": ".net",
+    "project": "MeuProjeto",
+    "agents": ["default", "test-strategist"],
+    "disabledAgents": ["docs-maintainer"]
+  },
   "diff": "conteúdo_do_git_diff_aqui"
 }
 ```
@@ -264,8 +310,13 @@ O workflow consumidor permite acionar o A.L.E.X em PRs:
 
 - manualmente via `workflow_dispatch` informando `pr_number`;
 - por comentário contendo `alex review` no PR ou em review comments.
+- por comentário com perfil de agentes, como `alex review all`, `alex review --agents all` ou `alex review --agents default,test-strategist --disable-agents docs-maintainer`.
 
-Configure o secret `GEMINI_API_KEY` no repositório. Opcionalmente, configure a variável `ALEX_MODEL` para trocar o modelo padrão.
+Configure o secret `GEMINI_API_KEY` no repositório. Opcionalmente, configure as variáveis `ALEX_MODEL`, `ALEX_AGENTS` e `ALEX_DISABLED_AGENTS` para trocar o modelo e o perfil de agentes padrão.
+
+Para falhas transitórias do provedor, o A.L.E.X aplica retry exponencial com jitter preservando o ciclo interno do ADK. Os padrões são `ALEX_AGENT_MAX_RETRIES=2` e `ALEX_AGENT_RETRY_BASE_MS=1000`. Para evitar retry storm, perfis com múltiplos agentes não reexecutam o pipeline inteiro por padrão; use `ALEX_ALLOW_MULTI_AGENT_PIPELINE_RETRY=true` apenas se aceitar esse custo.
+
+Na API, `ALEX_API_MAX_CONCURRENT_ANALYSES` controla o backpressure global de análises simultâneas. O padrão é `2`; quando o limite é atingido, a API responde `503` com `Retry-After`.
 
 O workflow consumidor executa:
 ```bash
@@ -348,6 +399,7 @@ A.L.E.X/
 | **Trust Proxy** | Restrito a `loopback` por padrão; configurável via `TRUSTED_PROXY_CIDR` |
 | **Body Limit** | 10MB máximo; `jsonParser` aplicado **após** auth para economizar parse desnecessário |
 | **Sanitização de Diff** | `diff_sanitizer.ts` redacta secrets e arquivos sensíveis antes de enviar ao LLM |
+| **Limite de Confiança do LLM** | Código, diffs e comentários analisados são tratados como conteúdo não confiável; instruções embutidas nesses inputs não devem substituir prompts do sistema |
 | **Imutabilidade** | Orquestrador cria `normalizedInput` via spread — sem mutação do payload original |
 
 > [!WARNING]

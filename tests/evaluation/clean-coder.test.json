@@ -1,0 +1,11 @@
+{
+  "id": "clean-coder",
+  "purpose": "Verify that maintainability findings identify duplicated orchestration and unclear boundaries.",
+  "cases": [
+    {
+      "name": "detects duplicated parsing flow",
+      "input": "Two CLI commands duplicate the same parse and validation block.",
+      "expected": ["duplication", "centralized helper"]
+    }
+  ]
+}

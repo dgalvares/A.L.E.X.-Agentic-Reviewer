@@ -1,0 +1,11 @@
+{
+  "id": "error-handling-specialist",
+  "purpose": "Verify that error-handling findings cover corrupted inputs and recoverable startup failures.",
+  "cases": [
+    {
+      "name": "detects corrupted config crash",
+      "input": "The CLI reads a JSON config file and throws on malformed JSON during startup.",
+      "expected": ["graceful fallback", "diagnostic warning"]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "security-auditor",
+  "purpose": "Verify that security findings focus on exploitable risk and credential exposure.",
+  "cases": [
+    {
+      "name": "detects secret handling risk",
+      "input": "A diff adds process.env.SECRET_TOKEN to a child process environment.",
+      "expected": ["credential exposure", "least privilege"]
+    }
+  ]
+}
