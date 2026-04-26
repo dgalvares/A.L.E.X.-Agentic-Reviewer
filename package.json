@@ -1,6 +1,6 @@
 {
   "name": "@dgalvarestec/alex",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A.L.E.X code review microservice powered by Google ADK multi-agent reasoning",
   "repository": {
     "type": "git",
