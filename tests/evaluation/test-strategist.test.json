@@ -1,0 +1,16 @@
+{
+  "id": "test-strategist",
+  "purpose": "Verify that test findings require regression coverage for behavior and CI semantics.",
+  "cases": [
+    {
+      "name": "detects CI green on fail verdict",
+      "input": "A workflow runs alex ci without --fail-on-fail.",
+      "expected": ["failing check", "workflow regression test"]
+    },
+    {
+      "name": "stays silent when tests are unaffected",
+      "input": "A README typo is fixed without touching runtime code, contracts, workflows, or tests.",
+      "expected": ["no finding"]
+    }
+  ]
+}

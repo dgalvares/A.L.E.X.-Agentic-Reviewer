@@ -8,11 +8,15 @@ export const FALLBACK_MODEL = 'gemini-2.5-pro';
 const UserConfigSchema = z.object({
   geminiApiKey: z.string().optional(),
   model: z.string().optional(),
+  agents: z.string().optional(),
+  disabledAgents: z.string().optional(),
 });
 
 export type AlexUserConfig = {
   geminiApiKey?: string;
   model?: string;
+  agents?: string;
+  disabledAgents?: string;
 };
 
 let cachedUserConfig: AlexUserConfig | undefined;
@@ -26,13 +30,26 @@ export function readUserConfig(): AlexUserConfig {
 
   try {
     const raw = fs.readFileSync(getConfigPath(), 'utf-8');
-    const validation = UserConfigSchema.safeParse(JSON.parse(raw));
-    cachedUserConfig = validation.success ? validation.data : {};
+    const parsed = JSON.parse(raw);
+    const validation = UserConfigSchema.safeParse(parsed);
+    if (!validation.success) {
+      console.warn(`Config invalid at ${getConfigPath()}; ignoring stored values.`);
+      cachedUserConfig = {};
+      return cachedUserConfig;
+    }
+
+    cachedUserConfig = validation.data;
     return cachedUserConfig;
   } catch (error: unknown) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       cachedUserConfig = {};
       return {};
+    }
+
+    if (error instanceof SyntaxError) {
+      console.warn(`Config JSON invalid at ${getConfigPath()}; ignoring stored values.`);
+      cachedUserConfig = {};
+      return cachedUserConfig;
     }
 
     throw error;
@@ -53,12 +70,31 @@ export function writeUserConfig(config: AlexUserConfig): void {
     }
   }
 
-  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW;
-  const fd = fs.openSync(configPath, flags, 0o600);
+  const tempPath = path.join(configDir, `.config.${process.pid}.${Date.now()}.tmp`);
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL;
+  const fd = fs.openSync(tempPath, flags, 0o600);
   try {
     fs.writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf-8' });
-  } finally {
     fs.closeSync(fd);
+    fs.renameSync(tempPath, configPath);
+  } catch (error: unknown) {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // Already closed.
+    }
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best effort cleanup.
+    }
+    throw error;
+  } finally {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best effort cleanup.
+    }
   }
   cachedUserConfig = config;
 
@@ -89,10 +125,16 @@ export function getDefaultModel(): string {
 
 export function applyStoredConfigToEnv(): void {
   const config = readUserConfig();
-  if (!process.env.GEMINI_API_KEY && config.geminiApiKey) {
+  if (process.env.GEMINI_API_KEY === undefined && config.geminiApiKey) {
     process.env.GEMINI_API_KEY = config.geminiApiKey;
   }
-  if (!process.env.ALEX_MODEL && config.model) {
+  if (process.env.ALEX_MODEL === undefined && config.model) {
     process.env.ALEX_MODEL = config.model;
+  }
+  if (process.env.ALEX_AGENTS === undefined && config.agents) {
+    process.env.ALEX_AGENTS = config.agents;
+  }
+  if (process.env.ALEX_DISABLED_AGENTS === undefined && config.disabledAgents) {
+    process.env.ALEX_DISABLED_AGENTS = config.disabledAgents;
   }
 }

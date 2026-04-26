@@ -1,7 +1,10 @@
 import { LlmAgent, ParallelAgent, SequentialAgent } from '@google/adk';
 import { Schema, Type } from '@google/genai';
-import { getSecurityAuditor, getCleanCoder, getSreAgent, getBusinessProxy, getSecurityReviewer, getPerformanceReviewer } from './agents/specialists.js';
 import { getDefaultModel } from './config.js';
+import { AgentId, AGENT_BY_ID, DEFAULT_AGENT_IDS, AgentDefinition, REVIEWER_CATALOG } from './agents/catalog.js';
+import { buildArchitectConsolidatorInstruction } from './prompts/index.js';
+
+// ─── Final Report Schema ───────────────────────────────────────────────────────
 
 const finalReportSchema: Schema = {
   type: Type.OBJECT,
@@ -40,24 +43,58 @@ const finalReportSchema: Schema = {
   required: ['streamId', 'verdict', 'summary', 'issues', 'timestamp']
 };
 
-export const createRootAgent = (model: string = getDefaultModel()) => {
+// ─── Options ──────────────────────────────────────────────────────────────────
+
+export interface CreateRootAgentOpts {
   /**
-   * 1. Definindo o Conselho de Especialistas (Execução Paralela)
+   * IDs dos agentes a incluir no pipeline.
+   * Se omitido, usa DEFAULT_AGENT_IDS (comportamento original).
+   */
+  enabledAgents?: AgentId[];
+}
+
+// ─── Factory ──────────────────────────────────────────────────────────────────
+
+export const createRootAgent = (
+  model: string = getDefaultModel(),
+  opts: CreateRootAgentOpts = {},
+) => {
+  const enabledIds = opts.enabledAgents ?? [...DEFAULT_AGENT_IDS];
+
+  // Resolve definições na ordem do catálogo (preserva determinismo)
+  const enabledDefs = enabledIds
+    .map((id) => AGENT_BY_ID.get(id))
+    .filter((def): def is AgentDefinition => def !== undefined);
+
+  const enabledAgentIds = new Set(enabledDefs.map((d) => d.id));
+  const reflectionDefs = REVIEWER_CATALOG.filter((reviewer) => (
+    reviewer.requiresAgentIds.every((id) => enabledAgentIds.has(id))
+  ));
+
+  /**
+   * 1. Conselho de Especialistas (Execução Paralela)
    */
   const councilParallel = new ParallelAgent({
     name: 'council-parallel',
     description: 'Executa a análise de todos os especialistas simultaneamente.',
-    subAgents: [getSecurityAuditor(model), getCleanCoder(model), getSreAgent(model), getBusinessProxy(model)],
+    subAgents: enabledDefs.map((d) => d.factory(model)),
   });
 
   /**
-   * 2. Fase de Reflexão (Cross-Review Paralelo)
+   * 2. Instrução do Consolidator gerada dinamicamente a partir dos agentes ativos.
    */
-  const reflectionParallel = new ParallelAgent({
-    name: 'reflection-parallel',
-    description: 'Especialistas revisam os achados uns dos outros.',
-    subAgents: [getSecurityReviewer(model), getPerformanceReviewer(model)],
-  });
+  const councilSection = enabledDefs
+    .map((d) => `- ${d.label}: {${d.outputKey}?}`)
+    .join('\n');
+
+  const reflectionSection = reflectionDefs.length > 0
+    ? reflectionDefs.map((d) => `- ${d.label}: {${d.outputKey}?}`).join('\n')
+    : '(fase de reflexão desabilitada para este perfil)';
+
+  const consolidatorInstruction = buildArchitectConsolidatorInstruction(
+    councilSection,
+    reflectionSection,
+  );
 
   /**
    * 3. Agente de Consolidação (The Architect)
@@ -66,30 +103,29 @@ export const createRootAgent = (model: string = getDefaultModel()) => {
     name: 'architect-consolidator',
     model: model,
     description: 'Consolida o relatório final.',
-    instruction: `Você é o "Architect". Sua missão é consolidar o relatório final em JSON estrito.
-Analise os achados iniciais e as críticas da fase de reflexão injetados abaixo.
-Resolva conflitos e emita o veredito (PASS, FAIL, WARN). Se houver apontamentos com severidade Blocker, o veredito deve ser FAIL.
-
-**Resultados do Conselho Paralelo:**
-- Segurança: {security_findings?}
-- Qualidade: {quality_findings?}
-- Performance: {performance_findings?}
-- Negócios: {business_findings?}
-
-**Resultados da Reflexão (Críticas):**
-- Revisão de Segurança: {security_critique?}
-- Revisão de Performance: {performance_critique?}
-`,
+    instruction: consolidatorInstruction,
     outputSchema: finalReportSchema,
   });
 
   /**
-   * 4. Pipeline Principal
-   * Triage -> Parallel Analysis -> Reflection -> Consolidation
+   * 4. Pipeline Principal — reflection é incluída apenas se houver reviewers ativos.
    */
+  const pipelineStages: (ParallelAgent | LlmAgent)[] = [councilParallel];
+
+  if (reflectionDefs.length > 0) {
+    const reflectionParallel = new ParallelAgent({
+      name: 'reflection-parallel',
+      description: 'Especialistas revisam os achados uns dos outros.',
+      subAgents: reflectionDefs.map((d) => d.factory(model)),
+    });
+    pipelineStages.push(reflectionParallel);
+  }
+
+  pipelineStages.push(consolidator);
+
   return new SequentialAgent({
     name: 'alex-orchestrator-pipeline',
     description: 'Workflow completo com reflexão do A.L.E.X.',
-    subAgents: [councilParallel, reflectionParallel, consolidator],
+    subAgents: pipelineStages,
   });
 };

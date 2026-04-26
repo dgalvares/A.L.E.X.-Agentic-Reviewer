@@ -1,0 +1,11 @@
+{
+  "id": "observability-engineer",
+  "purpose": "Verify that observability findings improve debuggability without leaking secrets.",
+  "cases": [
+    {
+      "name": "detects missing auth failure logs",
+      "input": "An API returns 401 without structured warning logs.",
+      "expected": ["structured log", "no token leakage"]
+    }
+  ]
+}

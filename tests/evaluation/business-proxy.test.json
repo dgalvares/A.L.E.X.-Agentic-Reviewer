@@ -1,0 +1,11 @@
+{
+  "id": "business-proxy",
+  "purpose": "Verify that business-rule findings align implementation with declared project contracts.",
+  "cases": [
+    {
+      "name": "detects contract drift",
+      "input": "A prompt is hard-coded after the project requires externalized skills.",
+      "expected": ["contract-first", "configuration boundary"]
+    }
+  ]
+}

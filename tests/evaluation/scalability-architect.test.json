@@ -1,0 +1,11 @@
+{
+  "id": "scalability-architect",
+  "purpose": "Verify that scalability findings cover concurrency, batching, and memory pressure.",
+  "cases": [
+    {
+      "name": "detects unsafe concurrent reads",
+      "input": "A context builder reads many files concurrently before enforcing total size limits.",
+      "expected": ["preflight limits", "bounded concurrency"]
+    }
+  ]
+}

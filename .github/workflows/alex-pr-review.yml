@@ -70,17 +70,65 @@ jobs:
             echo "allowed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout repository
+      - name: Resolve agent profile
+        id: agent-profile
+        if: steps.permission.outputs.allowed == 'true'
+        uses: actions/github-script@v7
+        env:
+          DEFAULT_ALEX_AGENTS: ${{ vars.ALEX_AGENTS || 'default' }}
+          DEFAULT_ALEX_DISABLED_AGENTS: ${{ vars.ALEX_DISABLED_AGENTS || '' }}
+        with:
+          script: |
+            const body = context.payload.comment?.body || '';
+            const commandLine = body.split(/\r?\n/).find((line) => /\balex\s+review\b/i.test(line)) || '';
+
+            const clean = (value) => {
+              const trimmed = String(value || '').trim();
+              if (!trimmed) return '';
+              if (!/^[a-z0-9,_ -]+$/i.test(trimmed)) {
+                core.warning(`Perfil de agentes invalido ignorado: ${trimmed}`);
+                return '';
+              }
+              return trimmed.replace(/\s*,\s*/g, ',');
+            };
+
+            const readOption = (name) => {
+              const match = commandLine.match(new RegExp(`--${name}(?:=|\\s+)([^\\s]+)`, 'i'));
+              return match ? clean(match[1]) : '';
+            };
+
+            const agentsOption = readOption('agents');
+            const disabledOption = readOption('disable-agents');
+            const rest = commandLine.replace(/\balex\s+review\b/i, '').trim();
+            const restTokens = rest.split(/\s+/).filter(Boolean);
+            const shortcut = restTokens.length === 1 && !restTokens[0].startsWith('--')
+              ? restTokens[0]
+              : '';
+
+            core.setOutput('agents', agentsOption || clean(shortcut) || clean(process.env.DEFAULT_ALEX_AGENTS));
+            core.setOutput('disabled-agents', disabledOption || clean(process.env.DEFAULT_ALEX_DISABLED_AGENTS));
+
+      - name: Checkout trusted A.L.E.X source
+        if: steps.permission.outputs.allowed == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: alex-tool
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Checkout PR analysis target
         if: steps.permission.outputs.allowed == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: pr-target
 
-      - name: Checkout PR branch
+      - name: Checkout PR branch in analysis target
         if: steps.permission.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
+        working-directory: pr-target
         run: |
           set -euo pipefail
           gh pr checkout "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}"
@@ -91,13 +139,16 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: alex-tool/package-lock.json
 
-      - name: Install dependencies
+      - name: Install trusted A.L.E.X dependencies
         if: steps.permission.outputs.allowed == 'true'
+        working-directory: alex-tool
         run: npm ci
 
-      - name: Build A.L.E.X
+      - name: Build trusted A.L.E.X
         if: steps.permission.outputs.allowed == 'true'
+        working-directory: alex-tool
         run: npm run build
 
       - name: Capture PR diff
@@ -105,8 +156,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
+        working-directory: pr-target
         run: |
           set -euo pipefail
+          rm -f pr.diff "$RUNNER_TEMP/alex-review.md"
           gh pr diff "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" > pr.diff
 
       - name: Run A.L.E.X CI review
@@ -114,25 +167,41 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ALEX_MODEL: ${{ vars.ALEX_MODEL || 'gemini-2.5-pro' }}
+          ALEX_AGENTS: ${{ steps.agent-profile.outputs.agents }}
+          ALEX_DISABLED_AGENTS: ${{ steps.agent-profile.outputs.disabled-agents }}
+          REPORT_PATH: ${{ runner.temp }}/alex-review.md
+        working-directory: pr-target
         run: |
-          node dist/cli.js ci \
+          node ../alex-tool/dist/cli.js ci \
             --diff-file pr.diff \
-            --output-file alex-review.md \
+            --output-file "$REPORT_PATH" \
             --format markdown \
             --project "${{ github.repository }}" \
-            --pr-number "${{ steps.pr.outputs.number }}"
+            --pr-number "${{ steps.pr.outputs.number }}" \
+            --fail-on-fail \
+            --agents "$ALEX_AGENTS" \
+            --disable-agents "$ALEX_DISABLED_AGENTS"
 
       - name: Comment review on PR
-        if: steps.permission.outputs.allowed == 'true'
+        if: always() && steps.permission.outputs.allowed == 'true'
         uses: actions/github-script@v7
         env:
           PR_NUM: ${{ steps.pr.outputs.number }}
+          REPORT_PATH: ${{ runner.temp }}/alex-review.md
         with:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
             const prNum = Number(process.env.PR_NUM);
-            const review = fs.readFileSync('alex-review.md', 'utf8');
+            const reportPath = process.env.REPORT_PATH;
+            const review = reportPath && fs.existsSync(reportPath)
+              ? fs.readFileSync(reportPath, 'utf8')
+              : [
+                  '# A.L.E.X Code Review',
+                  '',
+                  'A execução do review falhou antes de gerar o relatório Markdown.',
+                  `Consulte os logs do workflow run ${context.runId}.`
+                ].join('\n');
             const body = [
               review,
               '',
@@ -153,8 +222,9 @@ jobs:
             });
 
       - name: Upload report artifact
-        if: steps.permission.outputs.allowed == 'true'
+        if: always() && steps.permission.outputs.allowed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: alex-review-pr-${{ steps.pr.outputs.number }}
-          path: alex-review.md
+          path: ${{ runner.temp }}/alex-review.md
+          if-no-files-found: ignore

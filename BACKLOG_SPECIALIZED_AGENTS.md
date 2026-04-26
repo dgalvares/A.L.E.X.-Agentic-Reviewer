@@ -60,7 +60,17 @@ Agente proposto:
 error-handling-specialist
 ```
 
-## Fase 1: Catalogo de Agentes
+## Status
+
+Concluido. O backlog foi entregue com estes ajustes finais:
+
+- `AGENT_CATALOG` contem apenas agentes de analise configuraveis pelo usuario.
+- `REVIEWER_CATALOG` contem revisores internos, ativados automaticamente por dependencia.
+- `default` expande para o perfil padrao de agentes de analise.
+- `all` expande para todos os agentes de analise registrados.
+- Revisores nao podem ser habilitados/desabilitados diretamente pelo usuario.
+
+## Fase 1: Catalogo de Agentes [Concluido]
 
 Criar um catalogo central para os agentes:
 
@@ -95,7 +105,7 @@ Critérios de aceite:
 - `default` expande para o conjunto padrao atual.
 - Agente desconhecido falha com mensagem clara.
 
-## Fase 2: Selecao Dinamica de Agentes
+## Fase 2: Selecao Dinamica de Agentes [Concluido]
 
 Adicionar suporte a selecao por CLI:
 
@@ -119,7 +129,7 @@ Critérios de aceite:
 - Env vars funcionam em CI/CD.
 - CLI tem precedencia sobre env vars.
 
-## Fase 3: Orquestracao Dinamica
+## Fase 3: Orquestracao Dinamica [Concluido]
 
 Hoje `src/agent.ts` monta o conselho de forma estatica.
 
@@ -143,7 +153,7 @@ Critérios de aceite:
 - Consolidator recebe apenas outputKeys de agentes habilitados.
 - Reflection agents continuam funcionando sem assumir outputs ausentes.
 
-## Fase 4: API e Contratos
+## Fase 4: API e Contratos [Concluido]
 
 Adicionar controle por request:
 
@@ -160,7 +170,7 @@ Critérios de aceite:
 - Payload invalido retorna erro claro.
 - Backward compatibility mantida.
 
-## Fase 5: GitHub Actions
+## Fase 5: GitHub Actions [Concluido]
 
 Atualizar workflows:
 
@@ -184,7 +194,7 @@ Critérios de aceite:
 - Repos consumidores podem configurar perfil de review por variaveis do GitHub.
 - Ausencia de variaveis mantem comportamento atual.
 
-## Fase 6: Novos Prompts
+## Fase 6: Novos Prompts [Concluido]
 
 Adicionar prompts dedicados em `src/prompts/index.ts`.
 
@@ -202,7 +212,7 @@ Critérios de aceite:
 - Cada agente evita emitir Blocker sem contexto suficiente.
 - Cada agente tem outputKey proprio.
 
-## Fase 7: Config Persistente
+## Fase 7: Config Persistente [Concluido]
 
 Adicionar comandos opcionais:
 
@@ -214,22 +224,26 @@ alex config show
 
 Esta fase deve vir depois de CLI/env/API para evitar crescer o primeiro corte.
 
-## Fase 8: Testes
+## Fase 8: Testes [Concluido]
 
-Cobrir:
+Status: concluido em testes unitarios e de workflow.
 
-- parsing de lista de agentes;
-- expansao de `default`;
-- agente desconhecido;
-- remocao via `disabledAgents`;
-- precedencia CLI > env > config;
-- pipeline com subconjunto de agentes;
-- workflow consumidor com variaveis de agentes;
-- consolidator com outputKeys dinamicos.
+Cobertura entregue:
+
+- [x] parsing de lista de agentes;
+- [x] expansao de `default`;
+- [x] expansao de `all`;
+- [x] agente desconhecido;
+- [x] remocao via `disabledAgents`;
+- [x] precedencia CLI > env > config;
+- [x] pipeline com subconjunto de agentes;
+- [x] workflow consumidor com variaveis de agentes;
+- [x] consolidator com outputKeys dinamicos;
+- [x] revisores dependentes dos agentes habilitados.
 
 ## Plano de Entrega
 
-### PR 1: Infra de selecao
+### PR 1: Infra de selecao [Concluido]
 
 - Catalogo.
 - Parser de agentes.
@@ -238,7 +252,7 @@ Cobrir:
 - Testes.
 - Sem novos agentes.
 
-### PR 2: Novos agentes
+### PR 2: Novos agentes [Concluido]
 
 - `error-handling-specialist`.
 - `test-strategist`.
@@ -258,6 +272,5 @@ Cobrir:
 
 - UI web para selecionar agentes.
 - Pesos/prioridades configuraveis por agente.
-- Execucao condicional automatica por tipo de arquivo.
+- Execucao condicional automatica por tipo de arquivo → ver `BACKLOG_AGENT_TRIAGE.md`.
 - Perfil de review aprendido historicamente.
-

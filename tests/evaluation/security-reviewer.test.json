@@ -1,0 +1,11 @@
+{
+  "id": "security-reviewer",
+  "purpose": "Verify that the reviewer critiques other agents through a security lens.",
+  "cases": [
+    {
+      "name": "reviews performance advice for secret leakage",
+      "input": "A performance suggestion expands child process environment forwarding.",
+      "expected": ["security tradeoff", "least privilege"]
+    }
+  ]
+}

@@ -4,10 +4,24 @@ import {
   AnalysisPayloadSchema,
   FinalReportSchema,
   MAX_ANALYSIS_CONTENT_LENGTH,
+  MAX_AGENT_PROFILE_ITEMS,
+  MAX_AGENT_PROFILE_ITEM_LENGTH,
 } from '../../dist/schemas/contracts.js';
 
 test('AnalysisPayloadSchema accepts API payload without streamId or metadata', () => {
   const validation = AnalysisPayloadSchema.safeParse({
+    diff: 'diff --git a/a.ts b/a.ts',
+  });
+
+  assert.equal(validation.success, true);
+});
+
+test('AnalysisPayloadSchema accepts dynamic agent profile metadata', () => {
+  const validation = AnalysisPayloadSchema.safeParse({
+    metadata: {
+      agents: ['default', 'test-strategist'],
+      disabledAgents: ['docs-maintainer'],
+    },
     diff: 'diff --git a/a.ts b/a.ts',
   });
 
@@ -25,6 +39,28 @@ test('AnalysisPayloadSchema rejects payloads without diff or sourceCode', () => 
 test('AnalysisPayloadSchema rejects oversized analysis content', () => {
   const validation = AnalysisPayloadSchema.safeParse({
     diff: 'a'.repeat(MAX_ANALYSIS_CONTENT_LENGTH + 1),
+  });
+
+  assert.equal(validation.success, false);
+});
+
+test('AnalysisPayloadSchema rejects oversized agent profile arrays', () => {
+  const validation = AnalysisPayloadSchema.safeParse({
+    metadata: {
+      agents: Array.from({ length: MAX_AGENT_PROFILE_ITEMS + 1 }, () => 'clean-coder'),
+    },
+    diff: 'diff --git a/a.ts b/a.ts',
+  });
+
+  assert.equal(validation.success, false);
+});
+
+test('AnalysisPayloadSchema rejects oversized agent profile items', () => {
+  const validation = AnalysisPayloadSchema.safeParse({
+    metadata: {
+      agents: ['a'.repeat(MAX_AGENT_PROFILE_ITEM_LENGTH + 1)],
+    },
+    diff: 'diff --git a/a.ts b/a.ts',
   });
 
   assert.equal(validation.success, false);

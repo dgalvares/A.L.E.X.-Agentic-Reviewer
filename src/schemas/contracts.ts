@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
 export const MAX_ANALYSIS_CONTENT_LENGTH = 10 * 1024 * 1024;
+export const MAX_AGENT_PROFILE_ITEMS = 32;
+export const MAX_AGENT_PROFILE_ITEM_LENGTH = 100;
+const AgentProfileItemSchema = z.string().max(MAX_AGENT_PROFILE_ITEM_LENGTH);
 
 /**
  * Severidade dos apontamentos seguindo a regra 4 do workspace.
@@ -26,9 +29,11 @@ export const AnalysisIssueSchema = z.object({
 export const AnalysisPayloadSchema = z.object({
   streamId: z.string().uuid().optional().describe('ID único da transação de análise. Quando ausente, a API gera um UUID.'),
   metadata: z.object({
-    stack: z.string().describe('Stack tecnológica (ex: .net, react, node).'),
-    project: z.string().describe('Nome do projeto ou micro-serviço.'),
+    stack: z.string().optional().describe('Stack tecnológica (ex: .net, react, node).'),
+    project: z.string().optional().describe('Nome do projeto ou micro-serviço.'),
     model: z.string().optional().describe('Modelo LLM opcional para esta requisição.'),
+    agents: z.array(AgentProfileItemSchema).max(MAX_AGENT_PROFILE_ITEMS).optional().describe('IDs de agentes habilitados para esta requisicao.'),
+    disabledAgents: z.array(AgentProfileItemSchema).max(MAX_AGENT_PROFILE_ITEMS).optional().describe('IDs de agentes removidos do conjunto final para esta requisicao.'),
     filesAffected: z.number().optional().describe('Número de arquivos afetados, preenchido pelo orquestrador.'),
   }).optional().describe('Metadados do projeto. Quando ausente, a API usa valores padrão.'),
   diff: z.string().max(MAX_ANALYSIS_CONTENT_LENGTH).optional().describe('Conteúdo do diff do Git a ser analisado.'),

@@ -1,0 +1,11 @@
+{
+  "id": "docs-maintainer",
+  "purpose": "Verify that documentation findings cover user-facing commands and configuration surfaces.",
+  "cases": [
+    {
+      "name": "detects undocumented agent env vars",
+      "input": "The CLI supports ALEX_AGENTS but README omits it.",
+      "expected": ["README update", "configuration reference"]
+    }
+  ]
+}
