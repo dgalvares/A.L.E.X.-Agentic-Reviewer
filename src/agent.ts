@@ -2,7 +2,9 @@ import { LlmAgent, ParallelAgent, SequentialAgent } from '@google/adk';
 import { Schema, Type } from '@google/genai';
 import { getDefaultModel } from './config.js';
 import { AgentId, AGENT_BY_ID, DEFAULT_AGENT_IDS, AgentDefinition, REVIEWER_CATALOG } from './agents/catalog.js';
+import { AgentModelMap, resolveModelForAgent } from './agents/agent_parser.js';
 import { buildArchitectConsolidatorInstruction } from './prompts/index.js';
+import { AnalysisMode } from './schemas/contracts.js';
 
 // ─── Final Report Schema ───────────────────────────────────────────────────────
 
@@ -51,6 +53,11 @@ export interface CreateRootAgentOpts {
    * Se omitido, usa DEFAULT_AGENT_IDS (comportamento original).
    */
   enabledAgents?: AgentId[];
+  analysisMode?: AnalysisMode;
+  /** Override de modelo por agente (CLI/Env). */
+  agentModels?: AgentModelMap;
+  /** Override de modelo via payload da API (menor prioridade que env vars). */
+  payloadAgentModels?: AgentModelMap;
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
@@ -77,7 +84,9 @@ export const createRootAgent = (
   const councilParallel = new ParallelAgent({
     name: 'council-parallel',
     description: 'Executa a análise de todos os especialistas simultaneamente.',
-    subAgents: enabledDefs.map((d) => d.factory(model)),
+    subAgents: enabledDefs.map((d) => d.factory(
+      resolveModelForAgent(d.id, model, opts.agentModels, opts.payloadAgentModels),
+    )),
   });
 
   /**
@@ -94,6 +103,7 @@ export const createRootAgent = (
   const consolidatorInstruction = buildArchitectConsolidatorInstruction(
     councilSection,
     reflectionSection,
+    opts.analysisMode,
   );
 
   /**
@@ -101,7 +111,7 @@ export const createRootAgent = (
    */
   const consolidator = new LlmAgent({
     name: 'architect-consolidator',
-    model: model,
+    model: resolveModelForAgent('architect-consolidator', model, opts.agentModels, opts.payloadAgentModels),
     description: 'Consolida o relatório final.',
     instruction: consolidatorInstruction,
     outputSchema: finalReportSchema,
@@ -116,7 +126,9 @@ export const createRootAgent = (
     const reflectionParallel = new ParallelAgent({
       name: 'reflection-parallel',
       description: 'Especialistas revisam os achados uns dos outros.',
-      subAgents: reflectionDefs.map((d) => d.factory(model)),
+      subAgents: reflectionDefs.map((d) => d.factory(
+        resolveModelForAgent(d.id, model, opts.agentModels, opts.payloadAgentModels),
+      )),
     });
     pipelineStages.push(reflectionParallel);
   }

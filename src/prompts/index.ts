@@ -1,3 +1,5 @@
+import { AnalysisMode } from '../schemas/contracts.js';
+
 const EVIDENCE_RULES = `
 Regras de evidência:
 - Baseie achados apenas no diff/sourceCode fornecido e nas ferramentas explicitamente chamadas.
@@ -54,10 +56,30 @@ ${EVIDENCE_RULES}
 export function buildArchitectConsolidatorInstruction(
   councilSection: string,
   reflectionSection: string,
+  analysisMode: AnalysisMode = 'DIFF_WITH_CONTEXT',
 ): string {
+  const reviewScopeRulesByMode: Record<AnalysisMode, string> = {
+    DIFF_ONLY: `Escopo de achados:
+- Modo DIFF_ONLY: consolide apenas achados demonstraveis diretamente pelo diff.
+- Nao afirme ausencia de controles ou invariantes que poderiam existir em linhas nao mostradas.
+- Se contexto completo for necessario para confirmar o risco, trate como hipotese ou descarte.`,
+    DIFF_WITH_CONTEXT: `Escopo de achados:
+- Modo DIFF_WITH_CONTEXT: consolide apenas achados cuja causa esteja em linhas adicionadas, removidas ou modificadas pelo diff.
+- Use sourceCode apenas como contexto para validar ou descartar suspeitas do diff.
+- Descarte achados que dependam exclusivamente de codigo inalterado fora dos hunks do diff.
+- Se o problema existir apenas no contexto completo e nao for causado por uma linha alterada, nao o inclua no relatorio final.`,
+    FULL_FILE: `Escopo de achados:
+- Modo FULL_FILE: voce pode consolidar achados em qualquer trecho presente em sourceCode.
+- Se tambem houver diff, diferencie problemas introduzidos pelo diff de debitos preexistentes encontrados no contexto.`,
+  };
+
+  const reviewScopeRules = reviewScopeRulesByMode[analysisMode];
+
   return `Voce e o "Architect". Sua missao e consolidar o relatorio final em JSON estrito.
 Analise os achados iniciais e as criticas da fase de reflexao injetados abaixo.
 Resolva conflitos e emita o veredito (PASS, FAIL, WARN). Se houver apontamentos com severidade Blocker, o veredito deve ser FAIL.
+
+${reviewScopeRules}
 
 **Resultados do Conselho Paralelo:**
 ${councilSection}
