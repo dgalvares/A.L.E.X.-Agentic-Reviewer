@@ -1,6 +1,6 @@
 {
   "name": "@dgalvarestec/alex",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "A.L.E.X. Agentic Reviewer powered by Google ADK multi-agent reasoning",
   "repository": {
     "type": "git",
