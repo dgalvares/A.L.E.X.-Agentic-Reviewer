@@ -100,7 +100,6 @@ Use `alex review all` ou `alex review --agents all` para executar todos os agent
 
 ```bash
 npm install -g @dgalvarestec/alex
-alex review
 ```
 
 Para instalar direto deste repositório antes da publicação no npm:
@@ -108,6 +107,8 @@ Para instalar direto deste repositório antes da publicação no npm:
 ```bash
 npm install -g github:dgalvares/A.L.E.X.-Advanced-Logic-Evaluation-X-ray-
 ```
+
+Antes do primeiro review, configure a chave do Gemini. Sem isso, comandos como `alex review` e `alex analyze` falham ao inicializar a análise.
 
 Faça o setup uma única vez:
 
@@ -119,6 +120,12 @@ alex config show
 
 O CLI salva essa configuração em `~/.alex/config.json`. Variáveis de ambiente continuam tendo prioridade, então CI/CD pode usar `GEMINI_API_KEY` e `ALEX_MODEL` normalmente.
 O comando `alex config set-key` solicita a chave em modo oculto, sem gravá-la no histórico do shell.
+
+Depois disso, execute o review:
+
+```bash
+alex review
+```
 
 ### Desenvolvimento local
 
@@ -172,7 +179,12 @@ alex review
 
 # Com modelo específico
 alex review -m gemini-2.5-pro
+
+# Permite achados tambem em trechos fora do diff, usando o contexto completo dos arquivos alterados
+alex review --include-context-findings
 ```
+
+Por padrao, `alex review` usa arquivos completos apenas como contexto e o consolidator deve reportar somente problemas causados por linhas tocadas pelo diff.
 
 **Output exemplo:**
 ```
@@ -262,7 +274,8 @@ Content-Type: application/json
     "stack": ".net",
     "project": "MeuProjeto",
     "agents": ["default", "test-strategist"],
-    "disabledAgents": ["docs-maintainer"]
+    "disabledAgents": ["docs-maintainer"],
+    "analysisMode": "DIFF_WITH_CONTEXT"
   },
   "diff": "conteúdo_do_git_diff_aqui"
 }
@@ -325,6 +338,8 @@ O workflow consumidor executa:
 gh pr diff <PR> > pr.diff
 alex ci --diff-file pr.diff --output-file alex-review.md --pr-number <PR>
 ```
+
+Use `--include-context-findings` no `alex ci` quando quiser permitir que o relatorio inclua problemas encontrados fora das linhas alteradas pelo diff.
 
 Comentários `alex review` só executam para usuários com permissão `write`, `maintain` ou `admin`, evitando consumo indevido da chave em repositórios públicos.
 
@@ -399,7 +414,7 @@ A.L.E.X/
 | **Validação de Input** | `AnalysisPayloadSchema` via Zod após auth/rate limit, antes do processamento |
 | **Fail-Closed** | API retorna 500 se `API_BEARER_TOKEN` não estiver configurado |
 | **Trust Proxy** | Restrito a `loopback` por padrão; configurável via `TRUSTED_PROXY_CIDR` |
-| **Body Limit** | 10MB máximo; `jsonParser` aplicado **após** auth para economizar parse desnecessário |
+| **Body Limit** | 25MB máximo; `jsonParser` aplicado **após** auth para economizar parse desnecessário |
 | **Sanitização de Diff** | `diff_sanitizer.ts` redacta secrets e arquivos sensíveis antes de enviar ao LLM |
 | **Limite de Confiança do LLM** | Código, diffs e comentários analisados são tratados como conteúdo não confiável; instruções embutidas nesses inputs não devem substituir prompts do sistema |
 | **Imutabilidade** | Orquestrador cria `normalizedInput` via spread — sem mutação do payload original |

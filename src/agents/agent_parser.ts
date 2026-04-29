@@ -5,6 +5,21 @@ import {
   VALID_AGENT_IDS,
 } from './catalog.js';
 
+/** IDs válidos para override de modelo (agentes + consolidador). */
+const VALID_MODEL_TARGET_IDS = new Set<string>([
+  ...Array.from(VALID_AGENT_IDS),
+  'architect-consolidator',
+  'security-reviewer',
+  'performance-reviewer',
+]);
+
+/**
+ * Mapa de override de modelo por agente.
+ * Chave = AgentId | 'architect-consolidator' | 'security-reviewer' | 'performance-reviewer'
+ * Valor = nome do modelo LLM (ex: 'gemini-2.0-flash')
+ */
+export type AgentModelMap = Map<string, string>;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AgentSelectionOpts {
@@ -51,6 +66,98 @@ export function resolveAgentIds(opts: AgentSelectionOpts = {}): AgentId[] {
   }
 
   return finalIds;
+}
+
+// ─── Model override helpers ───────────────────────────────────────────────────
+
+/**
+ * Converte um agent ID para o nome da env var correspondente.
+ * Ex: 'security-auditor' → 'ALEX_MODEL_SECURITY_AUDITOR'
+ */
+export function agentIdToEnvKey(id: string): string {
+  return `ALEX_MODEL_${id.replace(/-/g, '_').toUpperCase()}`;
+}
+
+/**
+ * Faz o parse do formato CLI `agentId:modelName,...` para um Map.
+ * Aceita vírgula e/ou espaço como separadores.
+ *
+ * @throws {Error} Se um ID desconhecido for fornecido.
+ */
+export function parseAgentModels(raw?: string): AgentModelMap {
+  const map: AgentModelMap = new Map();
+  if (!raw || !raw.trim()) return map;
+
+  const tokens = raw
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    const colonIdx = token.indexOf(':');
+    if (colonIdx <= 0 || colonIdx === token.length - 1) {
+      throw new Error(
+        `Formato inválido em --agent-models: "${token}". ` +
+        `Use o formato: agentId:modelName (ex: security-auditor:gemini-2.0-flash).`,
+      );
+    }
+    const agentId = token.slice(0, colonIdx).trim();
+    const modelName = token.slice(colonIdx + 1).trim();
+
+    if (!VALID_MODEL_TARGET_IDS.has(agentId)) {
+      throw new Error(
+        `ID de agente inválido em --agent-models: "${agentId}". ` +
+        `IDs válidos: ${[...VALID_MODEL_TARGET_IDS].join(', ')}.`,
+      );
+    }
+    map.set(agentId, modelName);
+  }
+
+  return map;
+}
+
+/**
+ * Resolve o modelo LLM a usar para um agente específico, aplicando a precedência:
+ * 1. cliMap (--agent-models)  — prioridade máxima
+ * 2. Env var por agente       — ALEX_MODEL_<AGENT_ID_UPPERCASE>
+ * 3. payloadMap               — metadata.agentModels da API REST
+ * 4. globalModel              — ALEX_MODEL / --model  (fallback)
+ */
+export function resolveModelForAgent(
+  agentId: string,
+  globalModel: string,
+  cliMap?: AgentModelMap,
+  payloadMap?: AgentModelMap,
+): string {
+  if (cliMap?.has(agentId)) return cliMap.get(agentId)!;
+  const envVal = process.env[agentIdToEnvKey(agentId)];
+  if (envVal) return envVal;
+  if (payloadMap?.has(agentId)) return payloadMap.get(agentId)!;
+  return globalModel;
+}
+
+/**
+ * Constrói o AgentModelMap final combinando o valor da CLI (maior prioridade)
+ * com as env vars por agente (lidas de process.env).
+ * Retorna um Map pronto para ser passado ao orchestrator.
+ *
+ * @param cliRaw  — string bruta de --agent-models (opcional)
+ */
+export function resolveAgentModels(cliRaw?: string): AgentModelMap {
+  // Parse CLI primeiro (validação acontece aqui — erros lançados para o chamador)
+  const cliMap = parseAgentModels(cliRaw);
+
+  // Complementa com env vars para IDs que não foram especificados via CLI
+  const merged: AgentModelMap = new Map(cliMap);
+  for (const id of VALID_MODEL_TARGET_IDS) {
+    if (!merged.has(id)) {
+      const envVal = process.env[agentIdToEnvKey(id)];
+      if (envVal) merged.set(id, envVal);
+    }
+  }
+
+  return merged;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

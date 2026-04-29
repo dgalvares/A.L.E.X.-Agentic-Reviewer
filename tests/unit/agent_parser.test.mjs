@@ -6,6 +6,9 @@ import {
 } from '../../dist/agents/catalog.js';
 import {
   resolveAgentIds,
+  agentIdToEnvKey,
+  resolveModelForAgent,
+  resolveAgentModels,
 } from '../../dist/agents/agent_parser.js';
 import {
   buildArchitectConsolidatorInstruction,
@@ -37,6 +40,16 @@ test('review command exposes optional profile shortcut', async () => {
   });
 
   assert.match(help, /review \[options\] \[profile\]/);
+  assert.match(help, /--include-context-findings/);
+});
+
+test('ci command exposes context findings option', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const help = execFileSync(process.execPath, ['dist/cli.js', 'ci', '--help'], {
+    encoding: 'utf8',
+  });
+
+  assert.match(help, /--include-context-findings/);
 });
 
 test('resolveAgentIds expands all to every registered agent', () => {
@@ -94,6 +107,30 @@ test('buildArchitectConsolidatorInstruction uses only provided output keys', () 
 
   assert.match(instruction, /test_findings/);
   assert.doesNotMatch(instruction, /security_findings/);
+  assert.match(instruction, /Modo DIFF_WITH_CONTEXT/);
+  assert.match(instruction, /linhas adicionadas, removidas ou modificadas pelo diff/);
+});
+
+test('buildArchitectConsolidatorInstruction can target full file context', () => {
+  const instruction = buildArchitectConsolidatorInstruction(
+    '- Testes: {test_findings?}',
+    '(fase de reflexao desabilitada)',
+    'FULL_FILE',
+  );
+
+  assert.match(instruction, /Modo FULL_FILE/);
+  assert.doesNotMatch(instruction, /Use sourceCode apenas como contexto/);
+});
+
+test('buildArchitectConsolidatorInstruction supports diff-only mode', () => {
+  const instruction = buildArchitectConsolidatorInstruction(
+    '- Testes: {test_findings?}',
+    '(fase de reflexao desabilitada)',
+    'DIFF_ONLY',
+  );
+
+  assert.match(instruction, /Modo DIFF_ONLY/);
+  assert.match(instruction, /diretamente pelo diff/);
 });
 
 test('createRootAgent derives reviewers when their agent dependencies are present', () => {
@@ -121,4 +158,31 @@ test('createRootAgent skips reviewers when their agent dependencies are absent',
   assert.equal(stageNames.includes('security-auditor'), true);
   assert.equal(stageNames.includes('security-reviewer'), false);
   assert.equal(stageNames.includes('performance-reviewer'), false);
+});
+
+test('agentIdToEnvKey converts agent IDs to uppercase env keys', () => {
+  assert.equal(agentIdToEnvKey('security-auditor'), 'ALEX_MODEL_SECURITY_AUDITOR');
+  assert.equal(agentIdToEnvKey('architect-consolidator'), 'ALEX_MODEL_ARCHITECT_CONSOLIDATOR');
+});
+
+test('resolveModelForAgent applies precedence: CLI/Env > Payload > Global', () => {
+  const globalModel = 'global-pro';
+  const payloadModels = new Map([['security-auditor', 'payload-flash']]);
+
+  // 1. Fallback global
+  assert.equal(resolveModelForAgent('clean-coder', globalModel, new Map()), globalModel);
+
+  // 2. Payload override
+  assert.equal(resolveModelForAgent('security-auditor', globalModel, undefined, payloadModels), 'payload-flash');
+
+  // 3. Env Var override (higher precedence than payload)
+  process.env.ALEX_MODEL_SRE_AGENT = 'env-ultra';
+  assert.equal(resolveModelForAgent('sre-agent', globalModel, undefined, new Map([['sre-agent', 'payload-ignore']])), 'env-ultra');
+  delete process.env.ALEX_MODEL_SRE_AGENT;
+});
+
+test('resolveAgentModels parses CLI strings', () => {
+  const map = resolveAgentModels('security-auditor:flash-2.0,clean-coder:pro-1.5');
+  assert.equal(map.get('security-auditor'), 'flash-2.0');
+  assert.equal(map.get('clean-coder'), 'pro-1.5');
 });

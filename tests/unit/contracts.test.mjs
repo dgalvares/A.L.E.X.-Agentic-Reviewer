@@ -21,6 +21,7 @@ test('AnalysisPayloadSchema accepts dynamic agent profile metadata', () => {
     metadata: {
       agents: ['default', 'test-strategist'],
       disabledAgents: ['docs-maintainer'],
+      analysisMode: 'FULL_FILE',
     },
     diff: 'diff --git a/a.ts b/a.ts',
   });

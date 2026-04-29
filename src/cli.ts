@@ -10,19 +10,19 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { extractAndParseJSON } from './utils/parser.js';
-import { FinalReport, FinalReportSchema } from './schemas/contracts.js';
+import { AnalysisMode, AnalysisPayload, FinalReport, FinalReportSchema } from './schemas/contracts.js';
 import { applyStoredConfigToEnv, getConfigPath, getDefaultModel, getGeminiApiKey, readUserConfig, updateUserConfig } from './config.js';
 import { extractCodeMetadata } from './tools/diff_tools.js';
 import { sanitizeDiff } from './utils/diff_sanitizer.js';
 import { isBlockedSensitivePath } from './utils/sensitive_paths.js';
 import { formatReportMarkdown } from './utils/report_formatter.js';
-import { resolveAgentIds } from './agents/agent_parser.js';
+import { AgentModelMap, resolveAgentIds, resolveAgentModels, agentIdToEnvKey } from './agents/agent_parser.js';
 import { AgentId } from './agents/catalog.js';
 import { LlmResultParseError } from './errors.js';
 
-/** Lê o git diff via spawn com stream limitado a evitar OOM/DoS */
+/** L├¬ o git diff via spawn com stream limitado a evitar OOM/DoS */
 const MAX_DIFF_BYTES = 10 * 1024 * 1024;  // 10MB stdout
-const MAX_STDERR_BYTES = 64 * 1024;       // 64KB stderr — evita OOM em erros verbosos
+const MAX_STDERR_BYTES = 64 * 1024;       // 64KB stderr ÔÇö evita OOM em erros verbosos
 const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 const MAX_CONTEXT_TOTAL_BYTES = 2 * 1024 * 1024;
 const MAX_CONTEXT_FILES = 50;
@@ -109,7 +109,7 @@ async function resolveOutputFile(inputPath: string): Promise<string> {
 
 async function getGitDiff(): Promise<string> {
   return new Promise((resolve, reject) => {
-    // encoding não é suportado no tipo ChildProcessWithoutNullStreams; usamos Buffer
+    // encoding n├úo ├® suportado no tipo ChildProcessWithoutNullStreams; usamos Buffer
     const proc = spawn('git', ['diff', '--no-ext-diff', 'HEAD'], {
       env: getSanitizedChildEnv(),
     });
@@ -117,7 +117,7 @@ async function getGitDiff(): Promise<string> {
     const stderrChunks: Buffer[] = [];
     let totalBytes = 0;
     let totalStderrBytes = 0;
-    let settled = false; // Flag para evitar race condition após SIGKILL
+    let settled = false; // Flag para evitar race condition ap├│s SIGKILL
     const timeout = setTimeout(() => {
       proc.kill('SIGKILL');
       finish(() => reject(new Error(`git diff excedeu o timeout de ${GIT_DIFF_TIMEOUT_MS / 1000}s.`)));
@@ -131,7 +131,7 @@ async function getGitDiff(): Promise<string> {
       totalBytes += chunk.length;
       if (totalBytes > MAX_DIFF_BYTES) {
         proc.kill('SIGKILL');
-        finish(() => reject(new Error(`Git diff excede o limite máximo permitido de ${MAX_DIFF_BYTES / 1024 / 1024}MB.`)));
+        finish(() => reject(new Error(`Git diff excede o limite m├íximo permitido de ${MAX_DIFF_BYTES / 1024 / 1024}MB.`)));
         return;
       }
       chunks.push(chunk);
@@ -348,7 +348,7 @@ async function getChangedFilesContext(diffContent: string): Promise<string | und
   return combinedContext || undefined;
 }
 
-// ─── Helper compartilhado de UI ───────────────────────────────────────────────
+// ÔöÇÔöÇÔöÇ Helper compartilhado de UI ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 function printVerdict(spinner: ReturnType<typeof ora>, result: FinalReport): void {
   spinner.stop();
   const isPass = result.verdict === 'PASS';
@@ -372,38 +372,74 @@ function printVerdict(spinner: ReturnType<typeof ora>, result: FinalReport): voi
       console.log('');
     });
   }
+
+  // Exibe o custo em tokens, quando disponível
+  if (result.usage) {
+    const u = result.usage;
+    console.log(pc.gray('─── Token Usage ─────────────────────────────────'));
+    console.log(pc.dim(`  Prompt:     ${u.promptTokens.toLocaleString()}  |  Completion: ${u.completionTokens.toLocaleString()}  |  Total: ${u.totalTokens.toLocaleString()}${u.thoughtsTokens ? `  |  Thinking: ${u.thoughtsTokens.toLocaleString()}` : ''}${u.cachedTokens ? `  |  Cached: ${u.cachedTokens.toLocaleString()}` : ''}`));
+    if (u.byAgent.length > 0) {
+      console.log(pc.dim('  Por agente:'));
+      u.byAgent.forEach((a) => {
+        console.log(pc.dim(`    ${a.agent.padEnd(30)} prompt=${a.promptTokens.toLocaleString()}  completion=${a.completionTokens.toLocaleString()}  total=${a.totalTokens.toLocaleString()}`));
+      });
+    }
+    console.log(pc.gray('──────────────────────────────────────────────────\n'));
+  }
 }
 
-async function runAnalysis(request: {
-  metadata: { stack: string; project: string };
-  diff?: string;
-  sourceCode?: string;
-}, model: string, enabledAgents?: AgentId[]): Promise<FinalReport> {
-  const orchestrator = new ReviewOrchestrator(model, { enabledAgents });
-  const rawResult = await orchestrator.analyze(request);
+function resolveAnalysisMode(request: AnalysisPayload): AnalysisMode {
+  if (request.metadata?.analysisMode) return request.metadata.analysisMode;
+  if (!request.diff && request.sourceCode) return 'FULL_FILE';
+  if (request.diff && request.sourceCode) return 'DIFF_WITH_CONTEXT';
+  return 'DIFF_ONLY';
+}
+
+async function runAnalysis(
+  request: AnalysisPayload,
+  model: string,
+  enabledAgents?: AgentId[],
+  agentModels?: AgentModelMap,
+): Promise<FinalReport> {
+  const analysisMode = resolveAnalysisMode(request);
+  const orchestrator = new ReviewOrchestrator(model, {
+    enabledAgents,
+    analysisMode,
+    agentModels,
+  });
+  const rawResult = await orchestrator.analyze({
+    ...request,
+    metadata: {
+      ...request.metadata,
+      analysisMode,
+    },
+  });
   let parsed: unknown;
 
   try {
-    parsed = extractAndParseJSON(rawResult);
+    parsed = extractAndParseJSON(rawResult.content);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'JSON invalido.';
-    throw new LlmResultParseError(message, rawResult);
+    throw new LlmResultParseError(message, rawResult.content);
   }
 
   const validation = FinalReportSchema.safeParse(parsed);
   if (!validation.success) {
     throw new LlmResultParseError(
       `Contrato de resposta invalido: ${validation.error.message}`,
-      rawResult,
+      rawResult.content,
     );
   }
 
-  return validation.data;
+  // Injeta o usage (custo em tokens) no relatório para exibição no CLI
+  return rawResult.usage
+    ? { ...validation.data, usage: rawResult.usage }
+    : validation.data;
 }
 
 /**
- * Resolve o conjunto final de agentes com a precedência correta: CLI > env vars.
- * Erros de validação (ID inválido, council vazio) são relançados para o chamador.
+ * Resolve o conjunto final de agentes com a preced├¬ncia correta: CLI > env vars.
+ * Erros de valida├º├úo (ID inv├ílido, council vazio) s├úo relan├ºados para o chamador.
  */
 function resolveAgents(cliAgents?: string, cliDisabled?: string): AgentId[] {
   const agents = cliAgents !== undefined ? cliAgents : process.env.ALEX_AGENTS;
@@ -416,6 +452,15 @@ function resolveAgentsOrExit(cliAgents?: string, cliDisabled?: string): AgentId[
     return resolveAgents(cliAgents, cliDisabled);
   } catch (error: unknown) {
     console.error(pc.red(error instanceof Error ? error.message : 'Selecao de agentes invalida.'));
+    process.exit(1);
+  }
+}
+
+function resolveAgentModelsOrExit(cliRaw?: string): AgentModelMap {
+  try {
+    return resolveAgentModels(cliRaw);
+  } catch (error: unknown) {
+    console.error(pc.red(error instanceof Error ? error.message : 'Formato de --agent-models invalido.'));
     process.exit(1);
   }
 }
@@ -459,7 +504,7 @@ async function writeReportFile(filePath: string, content: string): Promise<void>
     await handle.close();
   }
 }
-// ─────────────────────────────────────────────────────────────────────────────
+// ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -472,7 +517,7 @@ const defaultModel = getDefaultModel();
 function ensureGeminiApiKey(): void {
   if (getGeminiApiKey()) return;
 
-  console.error(pc.red('Erro: GEMINI_API_KEY não configurada.'));
+  console.error(pc.red('Erro: GEMINI_API_KEY n├úo configurada.'));
   console.log(pc.yellow('Execute `alex config set-key` ou exporte GEMINI_API_KEY no ambiente.'));
   process.exit(1);
 }
@@ -542,7 +587,7 @@ program
 
 const configCommand = program
   .command('config')
-  .description('Gerencia a configuração global do A.L.E.X CLI.');
+  .description('Gerencia a configura├º├úo global do A.L.E.X CLI.');
 
 configCommand
   .command('set-key')
@@ -566,10 +611,10 @@ configCommand
   });
 configCommand
   .command('set-model <model>')
-  .description('Define o modelo padrão do A.L.E.X CLI.')
+  .description('Define o modelo padr├úo do A.L.E.X CLI.')
   .action((model) => {
     updateUserConfig({ model });
-    console.log(pc.green(`Modelo padrão salvo: ${model}`));
+    console.log(pc.green(`Modelo padr├úo salvo: ${model}`));
   });
 
 configCommand
@@ -604,7 +649,7 @@ configCommand
 
 configCommand
   .command('show')
-  .description('Mostra a configuração ativa sem exibir segredos.')
+  .description('Mostra a configura├º├úo ativa sem exibir segredos.')
   .action(() => {
     const userConfig = readUserConfig();
     const activeModel = getDefaultModel();
@@ -617,6 +662,23 @@ configCommand
     console.log(`ALEX_MODEL: ${activeModel} (${modelSource})`);
     console.log(`ALEX_AGENTS: ${process.env.ALEX_AGENTS || userConfig.agents || 'default'}`);
     console.log(`ALEX_DISABLED_AGENTS: ${process.env.ALEX_DISABLED_AGENTS || userConfig.disabledAgents || '(none)'}`);
+
+    // Exibe overrides de modelo por agente (env vars ALEX_MODEL_<AGENT>)
+    const MODEL_TARGET_IDS = [
+      'security-auditor', 'clean-coder', 'sre-agent', 'business-proxy',
+      'error-handling-specialist', 'test-strategist', 'observability-engineer',
+      'docs-maintainer', 'scalability-architect',
+      'architect-consolidator', 'security-reviewer', 'performance-reviewer',
+    ];
+    const activeOverrides = MODEL_TARGET_IDS
+      .map((id) => ({ id, envKey: agentIdToEnvKey(id), value: process.env[agentIdToEnvKey(id)] }))
+      .filter((o) => o.value);
+    if (activeOverrides.length > 0) {
+      console.log('Agent model overrides (env):');
+      activeOverrides.forEach((o) => console.log(`  ${o.envKey}=${o.value}`));
+    } else {
+      console.log('Agent model overrides: (none — todos usam ALEX_MODEL)');
+    }
   });
 
 program
@@ -625,20 +687,23 @@ program
   .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .option('--agents <lista>', 'Agentes habilitados (vírgula). Ex: security-auditor,clean-coder. Usa env ALEX_AGENTS se omitido.')
   .option('--disable-agents <lista>', 'Agentes a remover do conjunto. Ex: sre-agent. Usa env ALEX_DISABLED_AGENTS se omitido.')
+  .option('--agent-models <mapa>', 'Override de modelo por agente. Ex: "security-auditor:gemini-2.0-flash,architect-consolidator:gemini-2.5-pro".')
+  .option('--include-context-findings', 'Permite apontamentos fora das linhas alteradas pelo diff usando sourceCode como alvo de analise.')
   .action(async (profile, options) => {
     ensureGeminiApiKey();
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Review Iniciado\n')));
 
     const enabledAgents = resolveAgentsOrExit(options.agents ?? profile, options.disableAgents);
+    const agentModels = resolveAgentModelsOrExit(options.agentModels);
 
     const spinner = ora('Capturando git diff local...').start();
 
     let diffContent = '';
     try {
-      // Usa spawn com limite de bytes para evitar DoS/OOM em repositórios grandes
+      // Usa spawn com limite de bytes para evitar DoS/OOM em reposit├│rios grandes
       diffContent = await getLocalReviewDiff();
     } catch (error: unknown) {
-      spinner.fail(pc.red('Falha ao tentar executar git diff. Certifique-se de que está em um repositório git.'));
+      spinner.fail(pc.red('Falha ao tentar executar git diff. Certifique-se de que est├í em um reposit├│rio git.'));
       if (error instanceof Error) {
         console.error(error.message);
       }
@@ -646,25 +711,26 @@ program
     }
 
     if (!diffContent || diffContent.trim() === '') {
-      spinner.succeed(pc.green('Nenhuma modificação encontrada no repositório. O código está limpo.'));
+      spinner.succeed(pc.green('Nenhuma modifica├º├úo encontrada no reposit├│rio. O c├│digo est├í limpo.'));
       process.exit(0);
     }
 
     const modelToUse = options.model || defaultModel;
-    spinner.text = `Analisando código com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
+    spinner.text = `Analisando c├│digo com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
 
     
-    const request = {
+    const request: AnalysisPayload = {
       metadata: {
         stack: "Auto-detected",
-        project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
+        project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace',
+        analysisMode: options.includeContextFindings === true ? 'FULL_FILE' : 'DIFF_WITH_CONTEXT',
       },
       diff: sanitizeDiff(diffContent),
       sourceCode: sanitizeDiff(await getChangedFilesContext(diffContent) || '')
     };
 
     try {
-      const result = await runAnalysis(request, modelToUse, enabledAgents);
+      const result = await runAnalysis(request, modelToUse, enabledAgents, agentModels);
 
       printVerdict(spinner, result);
       if (result.verdict !== 'PASS') process.exit(1);
@@ -680,11 +746,13 @@ program
   .option('-m, --model <modelo>', 'Modelo LLM para utilizar na análise', defaultModel)
   .option('--agents <lista>', 'Agentes habilitados (vírgula). Ex: security-auditor,clean-coder. Usa env ALEX_AGENTS se omitido.')
   .option('--disable-agents <lista>', 'Agentes a remover do conjunto. Ex: sre-agent. Usa env ALEX_DISABLED_AGENTS se omitido.')
+  .option('--agent-models <mapa>', 'Override de modelo por agente. Ex: "security-auditor:gemini-2.0-flash,architect-consolidator:gemini-2.5-pro".')
   .action(async (caminho, options) => {
     ensureGeminiApiKey();
     console.log(pc.cyan(pc.bold('\n🛡️ A.L.E.X Code Analysis Iniciado\n')));
 
     const enabledAgents = resolveAgentsOrExit(options.agents, options.disableAgents);
+    const agentModels = resolveAgentModelsOrExit(options.agentModels);
 
     const targetPath = path.resolve(process.cwd(), caminho);
     
@@ -693,32 +761,32 @@ program
     try {
       resolvedPath = await fs.promises.realpath(targetPath);
     } catch {
-      console.error(pc.red(`Erro: O caminho especificado não existe (${targetPath})`));
+      console.error(pc.red(`Erro: O caminho especificado n├úo existe (${targetPath})`));
       process.exit(1);
     }
     const cwdReal = await fs.promises.realpath(process.cwd());
     if (!isWithinDirectory(cwdReal, resolvedPath!)) {
-      console.error(pc.red(`Erro de Segurança: O caminho está fora do escopo do projeto (${resolvedPath!}).`));
+      console.error(pc.red(`Erro de Seguran├ºa: O caminho est├í fora do escopo do projeto (${resolvedPath!}).`));
       process.exit(1);
     }
 
-    // 2. Data Leakage Blocklist (expandida) — usa resolvedPath para prevenir bypass por symlink
+    // 2. Data Leakage Blocklist (expandida) ÔÇö usa resolvedPath para prevenir bypass por symlink
     const baseName = path.basename(resolvedPath!);
     if (isBlockedSensitivePath(resolvedPath!)) {
-      console.error(pc.red(`Erro de Segurança: Arquivo bloqueado pela política contra vazamento de segredos (${baseName}).`));
+      console.error(pc.red(`Erro de Seguran├ºa: Arquivo bloqueado pela pol├¡tica contra vazamento de segredos (${baseName}).`));
       process.exit(1);
     }
 
     const stat = await fs.promises.stat(resolvedPath!);
     if (!stat.isFile()) {
-      console.error(pc.red(`Erro: Atualmente o comando 'analyze' suporta apenas arquivos únicos. Recebido diretório: ${targetPath}`));
+      console.error(pc.red(`Erro: Atualmente o comando 'analyze' suporta apenas arquivos ├║nicos. Recebido diret├│rio: ${targetPath}`));
       process.exit(1);
     }
 
     // 3. OOM Risk Prevention (Max Size 1MB)
     const MAX_SIZE = 1024 * 1024;
     if (stat.size > MAX_SIZE) {
-      console.error(pc.red(`Erro de Performance: O arquivo excede o limite máximo permitido de 1MB (${(stat.size / 1024 / 1024).toFixed(2)} MB).`));
+      console.error(pc.red(`Erro de Performance: O arquivo excede o limite m├íximo permitido de 1MB (${(stat.size / 1024 / 1024).toFixed(2)} MB).`));
       process.exit(1);
     }
 
@@ -736,27 +804,28 @@ program
     }
 
     if (!fileContent || fileContent.trim() === '') {
-      spinner.succeed(pc.green('O arquivo está vazio. Nenhuma análise necessária.'));
+      spinner.succeed(pc.green('O arquivo est├í vazio. Nenhuma an├ílise necess├íria.'));
       process.exit(0);
     }
 
-    // Formatando no payload para simular um arquivo único lido
+    // Formatando no payload para simular um arquivo ├║nico lido
     const sourceCodePayload = `=== File: ${caminho} ===\n${fileContent}`;
 
     const modelToUse = options.model || defaultModel;
     spinner.text = `Analisando arquivo com o Conselho de Especialistas (${modelToUse})... Isso pode levar alguns segundos.`;
 
     
-    const request = {
+    const request: AnalysisPayload = {
       metadata: {
         stack: "Auto-detected",
-        project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace'
+        project: process.cwd().split(/[\/\\]/).pop() || 'local-workspace',
+        analysisMode: 'FULL_FILE',
       },
       sourceCode: sanitizeDiff(sourceCodePayload)
     };
 
     try {
-      const result = await runAnalysis(request, modelToUse, enabledAgents);
+      const result = await runAnalysis(request, modelToUse, enabledAgents, agentModels);
 
       printVerdict(spinner, result);
       if (result.verdict !== 'PASS') process.exit(1);
@@ -778,11 +847,14 @@ program
   .option('--fail-on-fail', 'Retorna exit code 1 quando o veredito for FAIL.')
   .option('--agents <lista>', 'Agentes habilitados (vírgula). Ex: security-auditor,clean-coder. Usa env ALEX_AGENTS se omitido.')
   .option('--disable-agents <lista>', 'Agentes a remover do conjunto. Ex: docs-maintainer. Usa env ALEX_DISABLED_AGENTS se omitido.')
+  .option('--agent-models <mapa>', 'Override de modelo por agente. Ex: "security-auditor:gemini-2.0-flash,architect-consolidator:gemini-2.5-pro".')
+  .option('--include-context-findings', 'Permite apontamentos fora das linhas alteradas pelo diff usando sourceCode como alvo de analise.')
   .action(async (options) => {
     ensureGeminiApiKey();
     const modelToUse = options.model || defaultModel;
 
     const enabledAgents = resolveAgentsOrExit(options.agents, options.disableAgents);
+    const agentModels = resolveAgentModelsOrExit(options.agentModels);
 
     try {
       const diffPath = await resolveExistingFileWithinCwd(options.diffFile);
@@ -797,16 +869,17 @@ program
         throw new Error('Arquivo de diff vazio.');
       }
 
-      const request = {
+      const request: AnalysisPayload = {
         metadata: {
           stack: 'Auto-detected',
           project: options.project,
+          analysisMode: options.includeContextFindings === true ? 'FULL_FILE' : 'DIFF_WITH_CONTEXT',
         },
         diff: sanitizeDiff(diffContent),
         sourceCode: sanitizeDiff(await getChangedFilesContext(diffContent) || ''),
       };
 
-      const result = await runAnalysis(request, modelToUse, enabledAgents);
+      const result = await runAnalysis(request, modelToUse, enabledAgents, agentModels);
       const title = options.prNumber ? `A.L.E.X Code Review - PR #${options.prNumber}` : 'A.L.E.X Code Review';
       const output = options.format === 'json'
         ? JSON.stringify(result, null, 2)
