@@ -44,6 +44,7 @@ Este documento rege o comportamento da IA (Antigravity) durante o desenvolviment
 - **Proveniência & Auditoria:** Pacotes públicos devem ser publicados com proveniência verificável quando suportado pelo registry/CI, e GitHub Releases devem apontar para a mesma tag e anexar o pacote gerado.
 - **Notas de Release:** Toda release deve documentar alterações relevantes, breaking changes, migrações e riscos conhecidos em GitHub Release ou changelog; notas geradas automaticamente devem ser revisadas como draft antes da publicação pública.
 - **Ordem de Publicação:** A GitHub Release só deve ser considerada final quando a publicação npm concluir com sucesso; falhas devem bloquear ou manter a release como draft/pre-release.
+- **Workflow Operacional:** O passo a passo de release deve seguir `.agents/release-workflow.md`.
 
 ---
 > [!IMPORTANT]
